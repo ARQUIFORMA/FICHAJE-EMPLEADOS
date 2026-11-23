@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fichaje</title>
+  <meta name="theme-color" content="#0f3d5e">
+  <meta name="description" content="Registro de jornada de la empresa">
+  <link rel="manifest" href="manifest.webmanifest">
+  <!-- iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Fichaje">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <style>
+    :root {
+      --bg: #f4f6f8; --card: #ffffff; --ink: #14212b; --muted: #5b6b78; --line: #dde3e8;
+      --brand: #0f3d5e; --ok: #1a7f4b; --ok-bg: #e6f4ec; --warn: #a15c00; --warn-bg: #fff3e0;
+      --bad: #b42318; --bad-bg: #fdecea;
+      --oficina: #1d5fa7; --obra: #c2410c; --teletrabajo: #15803d;
+      --radius: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); -webkit-tap-highlight-color: transparent; }
+    body { min-height: 100vh; min-height: 100dvh; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+    header {
+      background: var(--brand); color: #fff;
+      padding: calc(14px + env(safe-area-inset-top)) 20px 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+    header .sub { font-size: 13px; opacity: .8; }
+    main { padding: 16px; max-width: 560px; margin: 0 auto; }
+    .card { background: var(--card); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; border: 1px solid var(--line); }
+    .hidden { display: none !important; }
+    label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 6px; }
+    input, select {
+      width: 100%; font-size: 17px; padding: 13px 14px; border-radius: 12px;
+      border: 1px solid var(--line); background: #fff; color: var(--ink);
+    }
+    button { font: inherit; cursor: pointer; border: 0; }
+    .btn { width: 100%; padding: 15px; border-radius: 12px; font-size: 17px; font-weight: 600; background: var(--brand); color: #fff; }
+    .btn.secundario { background: #e8eef3; color: var(--brand); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    .perfil { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #fff; }
+    .perfil.Oficina { background: var(--oficina); } .perfil.Obra { background: var(--obra); } .perfil.Teletrabajo { background: var(--teletrabajo); }
+
+    .reloj { text-align: center; font-size: 44px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
+    .fecha { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+    .estado { text-align: center; font-size: 15px; margin-bottom: 18px; }
+    .estado b { font-weight: 600; }
+
+    .fichar {
+      display: block; width: 220px; height: 220px; margin: 8px auto 18px; border-radius: 50%;
+      font-size: 22px; font-weight: 700; color: #fff; line-height: 1.2;
+      box-shadow: 0 10px 30px rgba(15, 61, 94, .25); transition: transform .08s ease;
+    }
+    .fichar:active:not(:disabled) { transform: scale(.97); }
+    .fichar.entrada { background: var(--ok); } .fichar.salida { background: var(--bad); }
+    .fichar:disabled { background: #9aa6b0; box-shadow: none; }
+    .fichar small { display: block; font-size: 13px; font-weight: 500; opacity: .9; margin-top: 6px; }
+
+    .aviso { border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.4; margin-bottom: 12px; }
+    .aviso.ok { background: var(--ok-bg); color: var(--ok); }
+    .aviso.warn { background: var(--warn-bg); color: var(--warn); }
+    .aviso.bad { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+    .gps { text-align: center; font-size: 13px; color: var(--muted); }
+
+    .lista { list-style: none; margin: 0; padding: 0; }
+    .lista li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+    .lista li:last-child { border-bottom: 0; }
+    .lista .t { font-weight: 600; }
+    .lista .m { color: var(--muted); font-size: 13px; }
+    .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: #eef2f6; color: var(--muted); white-space: nowrap; }
+    a { color: var(--oficina); }
+
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 6px; text-align: center; }
+    .kpi b { display: block; font-size: 22px; } .kpi span { font-size: 11px; color: var(--muted); }
+    .fila-admin { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .fila-admin:last-child { border-bottom: 0; }
+    .fila-admin .cab { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .fila-admin .det { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .inc { color: var(--bad); font-weight: 600; }
+    .fila2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+    .fila2 > div { min-width: 0; }
+    input[type=date] { min-width: 0; font-size: 16px; padding: 13px 10px; -webkit-appearance: none; appearance: none; min-height: 50px; }
+
+    nav {
+      position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--line);
+      display: flex; padding-bottom: env(safe-area-inset-bottom);
+    }
+    nav button { flex: 1; background: none; padding: 10px 0 12px; font-size: 12px; color: var(--muted); }
+    nav button.activo { color: var(--brand); font-weight: 700; }
+    nav svg { display: block; margin: 0 auto 3px; width: 24px; height: 24px; }
+
+    .toast {
+      position: fixed; left: 16px; right: 16px; bottom: calc(86px + env(safe-area-inset-bottom));
+      max-width: 528px; margin: 0 auto; padding: 14px 16px; border-radius: 12px; font-size: 15px;
+      background: var(--ink); color: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.2); z-index: 10;
+    }
+    .cargando { position: fixed; inset: 0; background: rgba(244,246,248,.7); display: flex; align-items: center; justify-content: center; z-index: 20; }
+    .spinner { width: 42px; height: 42px; border: 4px solid #cfd8df; border-top-color: var(--brand); border-radius: 50%; animation: g 0.8s linear infinite; }
+    @keyframes g { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="h-titulo">Fichaje</h1>
+      <div class="sub" id="h-sub">Registro de jornada</div>
+    </div>
+    <span id="h-perfil" class="perfil hidden"></span>
+  </header>
+
+  <main>
+    <!-- LOGIN -->
+    <section id="v-login" class="hidden">
+      <div class="card">
+        <h2 style="margin:0 0 4px;font-size:20px">Accede con tu PIN</h2>
+        <p style="margin:0;color:var(--muted);font-size:14px">Usa el email de empresa y el PIN de 6 cifras que te ha dado RRHH.</p>
+        <form id="f-login" autocomplete="on">
+          <label for="i-email">Email</label>
+          <input id="i-email" type="email" inputmode="email" autocomplete="username" required>
+          <label for="i-pin">PIN</label>
+          <input id="i-pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="current-password" required>
+          <div style="height:16px"></div>
+          <button class="btn" type="submit">Entrar</button>
+        </form>
+      </div>
+      <p class="gps">Al fichar, la app registra la hora. En los perfiles Oficina y Obra registra también tu ubicación en ese momento (nunca en segundo plano).</p>
+    </section>
+
+    <!-- FICHAR -->
+    <section id="v-fichar" class="hidden">
+      <div class="card">
+        <div class="reloj" id="reloj">--:--:--</div>
+        <div class="fecha" id="fecha"></div>
+        <div class="estado" id="estado"></div>
+        <div id="aviso-geo"></div>
+        <button id="b-principal" class="fichar entrada" disabled>Fichar<br>Entrada<small id="b-principal-sub"></small></button>
+        <button id="b-pausa" class="btn secundario hidden"></button>
+        <p class="gps" id="gps-info"></p>
+      </div>
+      <div class="card" id="c-ultimo"></div>
+    </section>
+
+    <!-- HISTORIAL -->
+    <section id="v-historial" class="hidden">
+      <div class="card">
+        <h2 style="margin:0 0 8px;font-size:18px">Mis últimos fichajes</h2>
+        <ul class="lista" id="l-historial"></ul>
+      </div>
+    </section>
+
+    <!-- ADMIN -->
+    <section id="v-admin" class="hidden">
+      <div class="card">
+        <div class="fila2">
+          <div><label for="a-fecha" style="margin-top:0">Día</label><input id="a-fecha" type="date"></div>
+          <div style="display:flex;align-items:flex-end"><button class="btn" id="a-ver">Ver resumen</button></div>
+        </div>
+      </div>
+      <div class="kpis" id="a-kpis"></div>
+      <div class="card"><div id="a-filas"></div></div>
+      <div class="card">
+        <h2 style="margin:0 0 6px;font-size:18px">Exportar registro horario</h2>
+        <div class="fila2">
+          <div><label for="e-desde">Desde</label><input id="e-desde" type="date"></div>
+          <div><label for="e-hasta">Hasta</label><input id="e-hasta" type="date"></div>
+        </div>
+        <label for="e-formato">Formato</label>
+        <select id="e-formato">
+          <option value="jornadas">Registro diario de jornada (inicio, fin, pausas, horas)</option>
+          <option value="fichajes">Fichajes detallados (con GPS y hash)</option>
+        </select>
+        <div style="height:14px"></div>
+        <button class="btn" id="e-descargar">Descargar CSV (Excel)</button>
+      </div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section id="v-ajustes" class="hidden">
+      <div class="card">
+        <h2 style="margin:0 0 8px;font-size:18px" id="aj-nombre"></h2>
+        <ul class="lista">
+          <li><span>Email</span><span class="m" id="aj-email"></span></li>
+          <li><span>Perfil</span><span class="m" id="aj-perfil"></span></li>
+          <li><span>Sede</span><span class="m" id="aj-sede"></span></li>
+        </ul>
+        <div style="height:14px"></div>
+        <button class="btn secundario" id="b-salir">Cerrar sesión en este móvil</button>
+      </div>
+    </section>
+  </main>
+
+  <nav id="nav" class="hidden">
+    <button data-v="v-fichar" class="activo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Fichar</button>
+    <button data-v="v-historial">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Historial</button>
+    <button data-v="v-admin" id="nav-admin" class="hidden">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>RRHH</button>
+    <button data-v="v-ajustes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Yo</button>
+  </nav>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="cargando" class="cargando hidden"><div class="spinner"></div></div>
+
+  <script src="config.js"></script>
+  <script src="geo.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
