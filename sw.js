@@ -1,8 +1,8 @@
 /* Service worker: cachea solo la "carcasa" de la app para que abra al instante.
    Las llamadas a la API NUNCA se cachean: un fichaje siempre va al servidor en el momento. */
-var VERSION = 'fichaje-v3';
-var CARCASA = ['./', './index.html', './app.js?v=3', './geo.js?v=3', './config.js', './manifest.webmanifest',
-               './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+var VERSION = 'fichaje-v6';
+var CARCASA = ['./', './index.html', './app.js?v=6', './geo.js?v=6', './config.js', './manifest.webmanifest',
+               './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(CARCASA); }).then(function () { return self.skipWaiting(); }));

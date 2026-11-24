@@ -1,10 +1,11 @@
-/* app.js — PWA de fichaje (v2) */
+/* app.js — PWA de fichaje (v3) */
 (function () {
   'use strict';
 
   var CFG = window.APP_CONFIG;
   var S = { token: null, adminToken: null, usuario: null, sede: null, estado: 'FUERA', permitidos: ['ENTRADA'],
-            precisionMax: 100, pos: null, geo: null, timerGps: null, offset: 0, empleados: [], sedesLista: [], ajustes: null };
+            precisionMax: 100, pos: null, geo: null, timerGps: null, offset: 0, empleados: [], sedesLista: [], ajustes: null,
+            calMes: null, calDatos: null };
   var $ = function (id) { return document.getElementById(id); };
   var ETQ = { ENTRADA: 'Entrada', INICIO_PAUSA: 'Inicio pausa', FIN_PAUSA: 'Fin pausa', SALIDA: 'Salida' };
   var EST = { FUERA: 'Fuera de jornada', DENTRO: 'Trabajando', PAUSA: 'En pausa' };
@@ -26,6 +27,9 @@
   function fechaLarga(iso) { return new Date(iso).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }); }
   function num(v) { return Number(String(v).trim().replace(',', '.')); }
   function radioSede() { return S.sede ? S.sede.radio : 100; }
+  function exigeOficina() { return S.usuario && S.usuario.perfil === 'Oficina' && S.usuario.exigeOficina !== false; }
+  var TIPOS_CAL = { FESTIVO: 'Festivo', VACACIONES: 'Vacaciones', BAJA: 'Baja médica', ASUNTOS_PROPIOS: 'Asuntos propios', PERMISO: 'Permiso' };
+  function fechaCorta(f) { var p = f.split('-'); return Number(p[2]) + '/' + Number(p[1]) + '/' + p[0]; }
   function msgFueraRango() { return 'Te encuentras fuera del rango de la oficina (' + radioSede() + ' m). No puedes fichar en modalidad presencial'; }
 
   function opcionesMeses(sel, n) {
@@ -112,9 +116,32 @@
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
       $('aj-nombre').textContent = r.usuario.nombre; $('aj-email').textContent = r.usuario.email;
       $('aj-perfil').textContent = r.usuario.perfil; $('aj-sede').textContent = r.sede ? r.sede.nombre + ' (radio ' + r.sede.radio + ' m)' : '—';
+      $('aviso-jornada').innerHTML = r.jornadaAbierta
+        ? '<div class="aviso warn">Tu jornada del ' + esc(fechaCorta(r.jornadaAbierta.fecha)) + ' quedó sin ' +
+          (r.jornadaAbierta.tipo === 'INICIO_PAUSA' ? 'terminar la pausa' : 'fichar la salida') + '. Avisa a administración para que lo corrija.</div>'
+        : '';
+      cargarLogo(r.logoVer);
       prepararGeo();
       mostrar('v-fichar');
     });
+  }
+
+  // ---------- Logo ----------
+  function pintarLogo(src) {
+    var img = $('h-logo');
+    if (src) { img.src = src; img.classList.remove('hidden'); } else { img.removeAttribute('src'); img.classList.add('hidden'); }
+  }
+  function cargarLogo(ver) {
+    if (!ver) { pintarLogo(null); try { localStorage.removeItem('fichaje_logo'); } catch (e) { /* */ } return; }
+    var guardado = null;
+    try { guardado = JSON.parse(localStorage.getItem('fichaje_logo') || 'null'); } catch (e) { /* */ }
+    if (guardado && guardado.v === ver) return pintarLogo(guardado.src);
+    api({ action: 'logo' }).then(function (r) {
+      if (!r.logo) return pintarLogo(null);
+      var src = 'data:' + r.logo.mime + ';base64,' + r.logo.base64;
+      try { localStorage.setItem('fichaje_logo', JSON.stringify({ v: ver, src: src })); } catch (e) { /* */ }
+      pintarLogo(src);
+    }).catch(function () {});
   }
 
   function aplicarEstado(estado, permitidos, ultimo) {
@@ -127,8 +154,9 @@
     b.innerHTML = 'Fichar<br>' + (esEntrada ? 'Entrada' : 'Salida') + '<small id="b-principal-sub"></small>';
     b.dataset.tipo = esEntrada ? 'ENTRADA' : 'SALIDA';
     var bp = $('b-pausa');
-    if (estado === 'DENTRO') { bp.textContent = 'Iniciar pausa / comida'; bp.dataset.tipo = 'INICIO_PAUSA'; bp.classList.remove('hidden'); }
-    else if (estado === 'PAUSA') { bp.textContent = 'Terminar pausa y volver al trabajo'; bp.dataset.tipo = 'FIN_PAUSA'; bp.classList.remove('hidden'); }
+    var esAlmuerzo = new Date(Date.now() + S.offset).getHours() < 12;
+    if (estado === 'DENTRO') { bp.textContent = esAlmuerzo ? 'Iniciar almuerzo' : 'Iniciar comida / pausa'; bp.dataset.tipo = 'INICIO_PAUSA'; bp.classList.remove('hidden'); }
+    else if (estado === 'PAUSA') { bp.textContent = 'Terminar ' + (ultimo && new Date(ultimo.fechaHora).getHours() < 12 ? 'almuerzo' : 'pausa') + ' y volver al trabajo'; bp.dataset.tipo = 'FIN_PAUSA'; bp.classList.remove('hidden'); }
     else bp.classList.add('hidden');
     actualizarBoton();
     $('c-ultimo').innerHTML = ultimo
@@ -142,7 +170,7 @@
     var habilitado = S.permitidos.indexOf(b.dataset.tipo) >= 0;
     aviso.innerHTML = ''; if (sub) sub.textContent = '';
     if (S.estado === 'PAUSA') { habilitado = false; if (sub) sub.textContent = 'Termina la pausa antes'; }
-    if (S.usuario && S.usuario.perfil === 'Oficina' && habilitado) {
+    if (exigeOficina() && habilitado) {
       if (!S.sede) { habilitado = false; aviso.innerHTML = '<div class="aviso bad">No tienes oficina asignada. Contacta con administración.</div>'; }
       else if (!S.geo) { habilitado = false; if (sub) sub.textContent = 'Buscando tu ubicación…'; }
       else if (S.geo.motivo === 'FUERA_RANGO') { habilitado = false; aviso.innerHTML = '<div class="aviso bad">' + esc(msgFueraRango()) + '</div>'; }
@@ -157,7 +185,8 @@
   function prepararGeo() {
     pararGps(); S.geo = null; S.pos = null; $('gps-info').textContent = '';
     var perfil = S.usuario.perfil;
-    if (perfil === 'Oficina') { refrescarPosicion(); S.timerGps = setInterval(refrescarPosicion, CFG.INTERVALO_GPS_MS || 15000); }
+    if (perfil === 'Oficina' && exigeOficina()) { refrescarPosicion(); S.timerGps = setInterval(refrescarPosicion, CFG.INTERVALO_GPS_MS || 15000); }
+    else if (perfil === 'Oficina') $('gps-info').textContent = 'Puedes fichar desde cualquier sitio.';
     else if (perfil === 'Obra') $('gps-info').textContent = 'Al fichar se registrará la hora y tu ubicación en ese momento.';
     else $('gps-info').textContent = 'Teletrabajo: se registra solo la hora, sin ubicación.';
     actualizarBoton();
@@ -172,7 +201,7 @@
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && S.token && S.usuario) {
       api({ action: 'estado' }).then(function (r) { S.sede = r.sede; aplicarEstado(r.estado, r.permitidos, r.ultimo); }).catch(function () {});
-      if (S.usuario.perfil === 'Oficina') refrescarPosicion();
+      if (exigeOficina()) refrescarPosicion();
     }
   });
 
@@ -180,9 +209,12 @@
   function fichar(tipo) {
     var perfil = S.usuario.perfil;
     cargando(true, perfil === 'Teletrabajo' ? '' : 'Obteniendo ubicación…');
-    var obtener = perfil === 'Teletrabajo' ? Promise.resolve(null) : Geo.obtenerPosicion({ tiempoMax: perfil === 'Obra' ? 12000 : 8000, precisionObjetivo: 20 });
+    var obtener = perfil === 'Teletrabajo' ? Promise.resolve(null)
+      : (perfil === 'Oficina' && !exigeOficina())
+        ? Geo.obtenerPosicion({ tiempoMax: 6000, precisionObjetivo: 50 }).catch(function () { return null; })
+        : Geo.obtenerPosicion({ tiempoMax: perfil === 'Obra' ? 12000 : 8000, precisionObjetivo: 20 });
     obtener.then(function (pos) {
-      if (perfil === 'Oficina') {
+      if (exigeOficina()) {
         var v = Geo.validarGeocerca(pos, S.sede, S.precisionMax);
         S.pos = pos; S.geo = v; actualizarBoton();
         if (!v.dentro) throw new Error(v.motivo === 'FUERA_RANGO' ? msgFueraRango() : 'Señal GPS poco precisa. Inténtalo de nuevo en unos segundos.');
@@ -249,6 +281,7 @@
     document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.classList.toggle('activo', b.dataset.p === id); });
     document.querySelectorAll('.panel').forEach(function (p) { p.classList.toggle('hidden', p.id !== id); });
     if (id === 'p-hoy') cargarResumen();
+    if (id === 'p-calendario') { cargarEmpleados(); cargarCalendario(); }
     if (id === 'p-personal' || id === 'p-corregir' || id === 'p-informes') cargarEmpleados();
     if (id === 'p-informes' || id === 'p-ajustes') cargarAjustes();
   }
@@ -261,6 +294,7 @@
     cargando(true);
     api({ action: 'adminResumen', fecha: $('a-fecha').value }).then(function (r) {
       var t = r.totales;
+      $('a-festivo').innerHTML = r.festivo ? '<div class="aviso info">Día festivo: ' + esc(r.festivo) + '</div>' : '';
       $('a-kpis').innerHTML = [['Plantilla', t.plantilla], ['Ficharon', t.ficharon], ['Trabajando', t.trabajandoAhora], ['Incidencias', t.incidencias]]
         .map(function (k) { return '<div class="kpi"><b>' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('');
       $('a-filas').innerHTML = r.filas.map(function (f) {
@@ -269,9 +303,11 @@
                  (x.direccion ? ' (' + esc(x.direccion) + ')' : '');
         }).join('<br>');
         var manual = f.fichajes.some(function (x) { return x.origen === 'CORRECCION'; }) ? ' · <span class="chip">manual</span>' : '';
+        var estadoTxt = f.ausencia && !f.fichajes.length ? f.ausencia : f.estado + (f.ausencia ? ' · ' + f.ausencia : '');
         return '<div class="fila-admin"><div class="cab"><b>' + esc(f.nombre) + '</b><span class="perfil ' + esc(f.perfil) + '">' + esc(f.perfil) + '</span></div>' +
-          '<div class="det">' + esc(f.estado) + (f.entrada ? ' · ' + esc(f.entrada) + '–' + esc(f.salida || '…') : '') +
-          (f.horas ? ' · ' + esc(f.horas) : '') + (f.pausaMin ? ' · pausa ' + f.pausaMin + ' min' : '') + manual +
+          '<div class="det">' + esc(estadoTxt) + (f.entrada ? ' · ' + esc(f.entrada) + '–' + esc(f.salida || '…') : '') +
+          (f.horas ? ' · ' + esc(f.horas) : '') + (f.pausaMin ? ' · pausa ' + f.pausaMin + ' min' : '') +
+          (f.extra && f.extra !== '0h 00m' ? ' · <b style="color:var(--bad)">+' + esc(f.extra) + ' extra</b>' : '') + manual +
           (f.incidencia ? ' · <span class="inc">' + esc(f.incidencia) + '</span>' : '') + '</div>' +
           (mapas ? '<div class="det">' + mapas + '</div>' : '') + '</div>';
       }).join('') || '<div class="m">No hay empleados activos.</div>';
@@ -302,7 +338,8 @@
     $('u-cuenta').textContent = activos + ' activos · ' + (S.empleados.length - activos) + ' de baja';
     $('u-lista').innerHTML = lista.map(function (u, i) {
       return '<li class="click" data-email="' + esc(u.email) + '"><div><div class="t">' + esc(u.nombre) + (u.esAdmin ? ' <span class="chip">admin</span>' : '') +
-        (u.tienePin ? '' : ' <span class="chip">sin PIN</span>') + '</div><div class="m">' + esc(u.email) + '</div></div>' +
+        (u.tienePin ? '' : ' <span class="chip">sin PIN</span>') + (u.sinGeocerca && u.perfil === 'Oficina' ? ' <span class="chip">ficha fuera</span>' : '') +
+        '</div><div class="m">' + esc(u.puesto ? u.puesto + ' · ' : '') + esc(u.email) + '</div></div>' +
         '<span class="perfil ' + (u.activo ? esc(u.perfil) : 'baja') + '">' + (u.activo ? esc(u.perfil) : 'Baja') + '</span></li>';
     }).join('') || '<li class="m">Sin resultados.</li>';
     $('u-lista').querySelectorAll('li[data-email]').forEach(function (li) {
@@ -323,20 +360,26 @@
       '<label for="m-email">Email de empresa</label><input id="m-email" type="email" value="' + esc(u.email) + '"' + (nuevo ? '' : ' disabled') + '>' +
       (nuevo ? '' : '<div class="m" style="margin-top:4px">El email no se puede cambiar porque identifica su histórico. Si cambia, da de baja y crea uno nuevo.</div>') +
       '<label for="m-nombre">Nombre completo</label><input id="m-nombre" value="' + esc(u.nombre) + '">' +
-      '<label for="m-nif">NIF (opcional, aparece en los informes)</label><input id="m-nif" value="' + esc(u.nif || '') + '">' +
+      '<label for="m-puesto">Puesto / profesión (aparece en los Excel)</label><input id="m-puesto" value="' + esc(u.puesto || '') + '" placeholder="Ej.: Arquitecto técnico">' +
+      '<label for="m-nif">NIF (opcional, aparece en los Excel)</label><input id="m-nif" value="' + esc(u.nif || '') + '">' +
       '<div class="fila2"><div><label for="m-perfil">Perfil</label><select id="m-perfil">' +
       ['Oficina', 'Obra', 'Teletrabajo'].map(function (p) { return '<option' + (u.perfil === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
       '</select></div><div><label for="m-sede">Sede</label><select id="m-sede">' + sedesOpts + '</select></div></div>' +
+      '<div class="interruptor" style="margin-top:16px" id="m-fuera-fila"><div><h3>Puede fichar fuera de la oficina</h3><div class="m">Solo afecta al perfil Oficina.</div></div>' +
+      '<input type="checkbox" id="m-fuera"' + (u.sinGeocerca ? ' checked' : '') + '></div>' +
       '<div class="interruptor" style="margin-top:16px"><div><h3>Activo</h3><div class="m">Desactivar = baja. Su histórico se conserva.</div></div>' +
       '<input type="checkbox" id="m-activo"' + (u.activo ? ' checked' : '') + (u.esAdmin ? ' disabled' : '') + '></div>' +
       '<div class="acciones"><button class="btn sec" id="m-cancelar">Cancelar</button><button class="btn" id="m-guardar">' + (nuevo ? 'Crear y generar PIN' : 'Guardar') + '</button></div>' +
       (nuevo ? '' : '<button class="btn sec" id="m-pin" style="margin-top:10px">Generar PIN nuevo</button>' +
-                    '<button class="btn sec" id="m-informe" style="margin-top:10px">Excel de este mes</button>')
+                    '<button class="btn sec" id="m-informe" style="margin-top:10px">Excel de este mes (Inspección)</button>')
     );
+    var verFuera = function () { $('m-fuera-fila').classList.toggle('hidden', $('m-perfil').value !== 'Oficina'); };
+    $('m-perfil').addEventListener('change', verFuera); verFuera();
     $('m-cancelar').addEventListener('click', cerrarModal);
     $('m-guardar').addEventListener('click', function () {
       var datos = { nuevo: nuevo, email: $('m-email').value.trim(), nombre: $('m-nombre').value.trim(), nif: $('m-nif').value.trim(),
-                    perfil: $('m-perfil').value, idSede: $('m-sede').value, activo: $('m-activo').checked };
+                    perfil: $('m-perfil').value, idSede: $('m-sede').value, activo: $('m-activo').checked,
+                    puesto: $('m-puesto').value.trim(), sinGeocerca: $('m-fuera').checked };
       cargando(true);
       api({ action: 'adminGuardarUsuario', usuario: datos }).then(function (r) {
         if (r.pin) mostrarPin(datos.nombre, datos.email, r.pin); else { cerrarModal(); toast(r.mensaje); }
@@ -394,13 +437,13 @@
   $('i-descargar').addEventListener('click', function () {
     if (!$('i-empleado').value) return toast('Elige un empleado.');
     cargando(true, 'Generando Excel…');
-    api({ action: 'adminInforme', email: $('i-empleado').value, mes: $('i-mes').value }).then(descargarXlsx)
+    api({ action: 'adminInforme', email: $('i-empleado').value, mes: $('i-mes').value, formato: $('i-formato').value }).then(descargarXlsx)
       .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
   $('i-archivar').addEventListener('click', function () {
     var mes = $('i-mes').value;
     if (!confirm('¿Archivar en Google Drive los informes de ' + $('i-mes').selectedOptions[0].textContent + '?\nSi ya existían, se sustituyen por los nuevos.')) return;
-    cargando(true, 'Generando un Excel por empleado… puede tardar 1–2 minutos.');
+    cargando(true, 'Generando los Excel de cada empleado… puede tardar 2–3 minutos.');
     api({ action: 'adminArchivarMes', mes: mes }).then(function (r) {
       toast(r.mensaje, 7000);
       $('i-carpeta').innerHTML = '<a href="' + esc(r.carpetaUrl) + '" target="_blank" rel="noopener">Abrir la carpeta en Google Drive</a>';
@@ -426,6 +469,16 @@
       $('s-empresa').value = r.config.EMPRESA || ''; $('s-cif').value = r.config.CIF || '';
       $('s-prec').value = r.config.PRECISION_MAX_M; $('s-sesion').value = r.config.SESION_DIAS; $('s-hmax').value = r.config.HORAS_MAX_JORNADA_ABIERTA;
       $('i-auto').checked = !!r.archivoAuto;
+      $('s-geocerca').checked = r.config.GEOCERCA_ACTIVA !== false;
+      $('s-recordatorios').checked = !!r.config.RECORDATORIOS;
+      $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
+      $('s-h-salida').value = r.config.HORA_AVISO_SALIDA || '18:00';
+      $('s-h-viernes').value = r.config.HORA_AVISO_SALIDA_VIERNES || '14:30';
+      var anio = hoyISO().slice(0, 4);
+      $('s-j-lj').value = r.config.JORNADA_LJ || '08:30'; $('s-j-v').value = r.config.JORNADA_V || '06:00';
+      $('s-j-verano').value = r.config.JORNADA_VERANO || '07:00';
+      $('s-v-desde').value = anio + '-' + (r.config.VERANO_DESDE || '07-01'); $('s-v-hasta').value = anio + '-' + (r.config.VERANO_HASTA || '08-31');
+      cargarLogo(r.logoVer); pintarLogoAjustes();
       if (r.carpetaUrl) $('i-carpeta').innerHTML = '<a href="' + esc(r.carpetaUrl) + '" target="_blank" rel="noopener">Abrir la carpeta de archivo en Google Drive</a>';
       pintarSedes(r.sedes);
     }).catch(function (e) { toast(e.message); });
@@ -473,7 +526,13 @@
         ' es de ' + grandes[0].radio + ' m. Con un radio tan grande se podría fichar «en la oficina» desde bastante lejos. ¿Guardar igualmente?')) return;
     cargando(true);
     api({ action: 'adminGuardarAjustes', config: { EMPRESA: $('s-empresa').value, CIF: $('s-cif').value, PRECISION_MAX_M: num($('s-prec').value),
-          SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value) }, sedes: sedes })
+          SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value),
+          GEOCERCA_ACTIVA: $('s-geocerca').checked, RECORDATORIOS: $('s-recordatorios').checked,
+          HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
+          HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
+          JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
+          VERANO_DESDE: $('s-v-desde').value.slice(5), VERANO_HASTA: $('s-v-hasta').value.slice(5) },
+          sedes: sedes, appUrl: location.href.split('#')[0].split('?')[0] })
       .then(function (r) { toast(r.mensaje); cargarAjustes(); })
       .catch(function (e) { toast(e.message, 7000); }).finally(function () { cargando(false); });
   });
@@ -483,6 +542,156 @@
       $('s-integridad-res').innerHTML = '<div class="aviso ' + (r.integro ? 'ok' : 'bad') + '">' + esc(r.mensaje) + '</div>';
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
+
+  // ----- Logo (ajustes) -----
+  function pintarLogoAjustes() {
+    var src = $('h-logo').getAttribute('src');
+    $('s-logo-prev').innerHTML = src ? '<img src="' + src + '" alt="Logo">' : 'Sin logo';
+  }
+  $('s-logo-subir').addEventListener('click', function () { $('s-logo-file').click(); });
+  $('s-logo-file').addEventListener('change', function () {
+    var f = this.files && this.files[0]; this.value = '';
+    if (!f) return;
+    if (!/^image\/(png|jpeg)$/.test(f.type)) return toast('El logo debe ser PNG o JPG.');
+    var lector = new FileReader();
+    lector.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        // Reduce a 600 x 200 como máximo para que pese poco
+        var k = Math.min(1, 600 / img.width, 200 / img.height);
+        var c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        var png = f.type === 'image/png';
+        var dataUrl = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.9);
+        cargando(true, 'Subiendo logo…');
+        api({ action: 'adminSubirLogo', mime: png ? 'image/png' : 'image/jpeg', base64: dataUrl.split(',')[1] }).then(function (r) {
+          try { localStorage.setItem('fichaje_logo', JSON.stringify({ v: r.logoVer, src: dataUrl })); } catch (e) { /* */ }
+          pintarLogo(dataUrl); pintarLogoAjustes(); toast(r.mensaje);
+        }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+      };
+      img.onerror = function () { toast('No se pudo leer la imagen.'); };
+      img.src = lector.result;
+    };
+    lector.readAsDataURL(f);
+  });
+  $('s-logo-borrar').addEventListener('click', function () {
+    if (!$('h-logo').getAttribute('src')) return toast('No hay logo.');
+    if (!confirm('¿Quitar el logo de la app y de los Excel?')) return;
+    cargando(true);
+    api({ action: 'adminBorrarLogo' }).then(function (r) { cargarLogo(null); pintarLogoAjustes(); toast(r.mensaje); })
+      .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  });
+
+  // ----- Calendario -----
+  function mesActual() { return hoyISO().slice(0, 7); }
+  function moverMes(mes, n) {
+    var y = Number(mes.slice(0, 4)), m = Number(mes.slice(5, 7)) - 1 + n;
+    y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+    return y + '-' + ('0' + (m + 1)).slice(-2);
+  }
+  $('cal-ant').addEventListener('click', function () { S.calMes = moverMes(S.calMes, -1); cargarCalendario(); });
+  $('cal-sig').addEventListener('click', function () { S.calMes = moverMes(S.calMes, 1); cargarCalendario(); });
+  $('cal-nuevo').addEventListener('click', function () { formularioAusencia(null); });
+
+  function cargarCalendario() {
+    if (!S.calMes) S.calMes = mesActual();
+    var y = Number(S.calMes.slice(0, 4)), m = Number(S.calMes.slice(5, 7));
+    $('cal-titulo').textContent = MESES[m - 1] + ' ' + y;
+    pintarCalendario([]);
+    return api({ action: 'adminCalendario', mes: S.calMes }).then(function (r) { S.calDatos = r.entradas; pintarCalendario(r.entradas); })
+      .catch(function (e) { toast(e.message); });
+  }
+  function pintarCalendario(entradas) {
+    var y = Number(S.calMes.slice(0, 4)), m = Number(S.calMes.slice(5, 7));
+    var dias = new Date(y, m, 0).getDate();
+    var primero = (new Date(y, m - 1, 1).getDay() + 6) % 7; // lunes = 0
+    var porDia = {};
+    entradas.forEach(function (e) { (porDia[e.fecha] = porDia[e.fecha] || []).push(e); });
+    var html = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(function (d) { return '<div class="dow">' + d + '</div>'; }).join('');
+    for (var i = 0; i < primero; i++) html += '<div class="dia vacio"></div>';
+    var hoy = hoyISO();
+    for (var d = 1; d <= dias; d++) {
+      var f = S.calMes + '-' + ('0' + d).slice(-2);
+      var dow = (primero + d - 1) % 7;
+      var lista = porDia[f] || [];
+      var festivo = lista.some(function (e) { return e.tipo === 'FESTIVO'; });
+      var cls = 'dia' + (dow >= 5 ? ' finde' : '') + (festivo ? ' festivo' : '') + (f === hoy ? ' hoy' : '');
+      var ets = lista.slice(0, 2).map(function (e) {
+        var txt = e.tipo === 'FESTIVO' ? (e.nota || 'Festivo') : e.nombre.split(' ')[0];
+        return '<span class="et t-' + esc(e.tipo) + '">' + esc(txt) + '</span>';
+      }).join('') + (lista.length > 2 ? '<span class="m" style="font-size:10px">+' + (lista.length - 2) + ' más</span>' : '');
+      html += '<button class="' + cls + '" data-f="' + f + '"><span class="num">' + d + '</span>' + ets + '</button>';
+    }
+    $('cal-grid').innerHTML = html;
+    $('cal-grid').querySelectorAll('button[data-f]').forEach(function (b) {
+      b.addEventListener('click', function () { verDia(b.dataset.f); });
+    });
+  }
+
+  function verDia(fecha) {
+    var lista = (S.calDatos || []).filter(function (e) { return e.fecha === fecha; });
+    var d = new Date(fecha + 'T12:00:00');
+    var titulo = d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+    abrirModal('<h2 style="text-transform:capitalize">' + esc(titulo) + '</h2>' +
+      (lista.length ? '<ul class="lista">' + lista.map(function (e) {
+        return '<li><div><span class="et t-' + esc(e.tipo) + '" style="font-size:12px;padding:3px 8px;border-radius:999px;color:#fff">' + esc(e.etiqueta) + '</span> ' +
+               '<b>' + esc(e.nombre) + '</b>' + (e.nota ? '<div class="m">' + esc(e.nota) + '</div>' : '') + '</div>' +
+               '<button class="btn peligro peq" data-id="' + esc(e.id) + '">Quitar</button></li>';
+      }).join('') + '</ul>' : '<p class="ayuda">Nada marcado este día.</p>') +
+      '<div class="acciones"><button class="btn sec" id="d-cerrar">Cerrar</button><button class="btn" id="d-anadir">+ Marcar este día</button></div>');
+    $('d-cerrar').addEventListener('click', cerrarModal);
+    $('d-anadir').addEventListener('click', function () { formularioAusencia(fecha); });
+    $('modal-hoja').querySelectorAll('button[data-id]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        cargando(true);
+        api({ action: 'adminBorrarCalendario', ids: [b.dataset.id] }).then(function (r) {
+          toast(r.mensaje); return cargarCalendario();
+        }).then(function () { verDia(fecha); }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+      });
+    });
+  }
+
+  function formularioAusencia(fecha) {
+    var hoy = fecha || hoyISO();
+    var activos = S.empleados.filter(function (u) { return u.activo; });
+    abrirModal('<h2>Marcar días</h2>' +
+      '<label>¿Qué es?</label><div class="tipos" id="f-tipos">' +
+      Object.keys(TIPOS_CAL).map(function (k, i) {
+        return '<button data-t="' + k + '"' + (i === 0 && !fecha ? '' : '') + '>' + TIPOS_CAL[k] + (k === 'FESTIVO' ? '<div class="m" style="font-weight:400">toda la empresa</div>' : '') + '</button>';
+      }).join('') + '</div>' +
+      '<div class="fila2"><div><label for="f-desde">Desde</label><input id="f-desde" type="date" value="' + hoy + '"></div>' +
+      '<div><label for="f-hasta">Hasta (incluido)</label><input id="f-hasta" type="date" value="' + hoy + '"></div></div>' +
+      '<div id="f-personas"><label>¿Quién?</label><div class="checks">' +
+      '<label><input type="checkbox" id="f-todos"> <b>Seleccionar a todos</b></label>' +
+      activos.map(function (u) { return '<label><input type="checkbox" class="f-emp" value="' + esc(u.email) + '"> ' + esc(u.nombre) + '</label>'; }).join('') +
+      '</div></div>' +
+      '<label for="f-nota">Nota (opcional)</label><input id="f-nota" placeholder="Ej.: Fiestas patronales, operación de rodilla…">' +
+      '<p class="m" style="margin-top:8px">Los sábados y domingos se saltan automáticamente (salvo en festivos).</p>' +
+      '<div class="acciones"><button class="btn sec" id="f-cancelar">Cancelar</button><button class="btn" id="f-guardar">Guardar</button></div>');
+    var tipo = null;
+    $('f-tipos').querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        tipo = b.dataset.t;
+        $('f-tipos').querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); });
+        $('f-personas').classList.toggle('hidden', tipo === 'FESTIVO');
+      });
+    });
+    $('f-desde').addEventListener('change', function () { if ($('f-hasta').value < this.value) $('f-hasta').value = this.value; });
+    $('f-todos').addEventListener('change', function () {
+      var on = this.checked; $('modal-hoja').querySelectorAll('.f-emp').forEach(function (c) { c.checked = on; });
+    });
+    $('f-cancelar').addEventListener('click', cerrarModal);
+    $('f-guardar').addEventListener('click', function () {
+      if (!tipo) return toast('Elige qué es: festivo, vacaciones, baja…');
+      var emails = Array.prototype.map.call($('modal-hoja').querySelectorAll('.f-emp:checked'), function (c) { return c.value; });
+      if (tipo !== 'FESTIVO' && !emails.length) return toast('Marca al menos a una persona.');
+      cargando(true);
+      api({ action: 'adminGuardarCalendario', tipo: tipo, desde: $('f-desde').value, hasta: $('f-hasta').value, emails: emails, nota: $('f-nota').value })
+        .then(function (r) { cerrarModal(); toast(r.mensaje); S.calMes = $('f-desde').value.slice(0, 7); return cargarCalendario(); })
+        .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+    });
+  }
 
   // ---------- Arranque ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
