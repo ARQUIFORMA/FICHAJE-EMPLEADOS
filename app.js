@@ -5,7 +5,7 @@
   var CFG = window.APP_CONFIG;
   var S = { token: null, adminToken: null, usuario: null, sede: null, estado: 'FUERA', permitidos: ['ENTRADA'],
             precisionMax: 100, pos: null, geo: null, timerGps: null, offset: 0, empleados: [], sedesLista: [], ajustes: null,
-            calMes: null, calDatos: null };
+            calMes: null, calDatos: null, empresas: [], filtro: '', logosEmp: {}, logoDestino: null };
   var $ = function (id) { return document.getElementById(id); };
   var ETQ = { ENTRADA: 'Entrada', INICIO_PAUSA: 'Inicio pausa', FIN_PAUSA: 'Fin pausa', SALIDA: 'Salida' };
   var EST = { FUERA: 'Fuera de jornada', DENTRO: 'Trabajando', PAUSA: 'En pausa' };
@@ -27,6 +27,20 @@
   function fechaLarga(iso) { return new Date(iso).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }); }
   function num(v) { return Number(String(v).trim().replace(',', '.')); }
   function radioSede() { return S.sede ? S.sede.radio : 100; }
+  function nombreEmpresa(id) { var e = S.empresas.filter(function (x) { return x.id === id; })[0]; return e ? e.nombre : ''; }
+  function multiempresa() { return S.empresas.length > 1; }
+  function deFiltro(u) { return !S.filtro || u.idEmpresa === S.filtro; }
+  function actualizarEmpresas(lista) {
+    if (!lista) return;
+    S.empresas = lista;
+    var sel = $('adm-empresa'), previo = S.filtro;
+    sel.innerHTML = '<option value="">Todas las empresas</option>' + lista.map(function (e) {
+      return '<option value="' + esc(e.id) + '">' + esc(e.nombre) + (e.activa ? '' : ' (inactiva)') + '</option>';
+    }).join('');
+    sel.value = lista.some(function (e) { return e.id === previo; }) ? previo : '';
+    S.filtro = sel.value;
+    $('adm-filtro').classList.toggle('hidden', !multiempresa());
+  }
   function exigeOficina() { return S.usuario && S.usuario.perfil === 'Oficina' && S.usuario.exigeOficina !== false; }
   var TIPOS_CAL = { FESTIVO: 'Festivo', VACACIONES: 'Vacaciones', BAJA: 'Baja médica', ASUNTOS_PROPIOS: 'Asuntos propios', PERMISO: 'Permiso' };
   function fechaCorta(f) { var p = f.split('-'); return Number(p[2]) + '/' + Number(p[1]) + '/' + p[0]; }
@@ -271,17 +285,23 @@
     api({ action: 'adminUnlock', pin: $('adm-pin').value.trim() }).then(function (r) {
       S.adminToken = r.adminToken; $('adm-pin').value = '';
       $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
-      abrirPanel('p-hoy');
+      cargarEmpleados().then(function () { abrirPanel('p-hoy'); });
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
   $('adm-cerrar').addEventListener('click', function () { bloquearAdmin(); toast('Panel cerrado.'); });
+
+  $('adm-empresa').addEventListener('change', function () {
+    S.filtro = this.value;
+    var activo = document.querySelector('#adm-seg button.activo');
+    abrirPanel(activo ? activo.dataset.p : 'p-hoy');
+  });
 
   function abrirPanel(id) {
     $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
     document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.classList.toggle('activo', b.dataset.p === id); });
     document.querySelectorAll('.panel').forEach(function (p) { p.classList.toggle('hidden', p.id !== id); });
     if (id === 'p-hoy') cargarResumen();
-    if (id === 'p-calendario') { cargarEmpleados(); cargarCalendario(); }
+    if (id === 'p-calendario') cargarEmpleados().then(cargarCalendario);
     if (id === 'p-personal' || id === 'p-corregir' || id === 'p-informes') cargarEmpleados();
     if (id === 'p-informes' || id === 'p-ajustes') cargarAjustes();
   }
@@ -292,7 +312,7 @@
   $('a-ver').addEventListener('click', cargarResumen);
   function cargarResumen() {
     cargando(true);
-    api({ action: 'adminResumen', fecha: $('a-fecha').value }).then(function (r) {
+    api({ action: 'adminResumen', fecha: $('a-fecha').value, empresa: S.filtro }).then(function (r) {
       var t = r.totales;
       $('a-festivo').innerHTML = r.festivo ? '<div class="aviso info">Día festivo: ' + esc(r.festivo) + '</div>' : '';
       $('a-kpis').innerHTML = [['Plantilla', t.plantilla], ['Ficharon', t.ficharon], ['Trabajando', t.trabajandoAhora], ['Incidencias', t.incidencias]]
@@ -305,6 +325,7 @@
         var manual = f.fichajes.some(function (x) { return x.origen === 'CORRECCION'; }) ? ' · <span class="chip">manual</span>' : '';
         var estadoTxt = f.ausencia && !f.fichajes.length ? f.ausencia : f.estado + (f.ausencia ? ' · ' + f.ausencia : '');
         return '<div class="fila-admin"><div class="cab"><b>' + esc(f.nombre) + '</b><span class="perfil ' + esc(f.perfil) + '">' + esc(f.perfil) + '</span></div>' +
+          (multiempresa() && !S.filtro ? '<div class="m">' + esc(f.empresa) + '</div>' : '') +
           '<div class="det">' + esc(estadoTxt) + (f.entrada ? ' · ' + esc(f.entrada) + '–' + esc(f.salida || '…') : '') +
           (f.horas ? ' · ' + esc(f.horas) : '') + (f.pausaMin ? ' · pausa ' + f.pausaMin + ' min' : '') +
           (f.extra && f.extra !== '0h 00m' ? ' · <b style="color:var(--bad)">+' + esc(f.extra) + ' extra</b>' : '') + manual +
@@ -318,13 +339,14 @@
   function cargarEmpleados() {
     return api({ action: 'adminUsuarios' }).then(function (r) {
       S.empleados = r.usuarios; S.sedesLista = r.sedes;
+      actualizarEmpresas(r.empresas);
       pintarEmpleados();
-      var opts = r.usuarios.filter(function (u) { return u.activo; }).map(function (u) {
+      var opts = r.usuarios.filter(function (u) { return u.activo && deFiltro(u); }).map(function (u) {
         return '<option value="' + esc(u.email) + '">' + esc(u.nombre) + '</option>';
       }).join('');
       var cSel = $('c-empleado').value, iSel = $('i-empleado').value;
       $('c-empleado').innerHTML = opts;
-      $('i-empleado').innerHTML = r.usuarios.map(function (u) {
+      $('i-empleado').innerHTML = r.usuarios.filter(deFiltro).map(function (u) {
         return '<option value="' + esc(u.email) + '">' + esc(u.nombre) + (u.activo ? '' : ' (baja)') + '</option>';
       }).join('');
       if (cSel) $('c-empleado').value = cSel;
@@ -333,13 +355,14 @@
   }
   function pintarEmpleados() {
     var q = $('u-buscar').value.trim().toLowerCase();
-    var lista = S.empleados.filter(function (u) { return !q || (u.nombre + ' ' + u.email).toLowerCase().indexOf(q) >= 0; });
-    var activos = S.empleados.filter(function (u) { return u.activo; }).length;
-    $('u-cuenta').textContent = activos + ' activos · ' + (S.empleados.length - activos) + ' de baja';
+    var base = S.empleados.filter(deFiltro);
+    var lista = base.filter(function (u) { return !q || (u.nombre + ' ' + u.email).toLowerCase().indexOf(q) >= 0; });
+    var activos = base.filter(function (u) { return u.activo; }).length;
+    $('u-cuenta').textContent = activos + ' activos · ' + (base.length - activos) + ' de baja' + (S.filtro ? ' · ' + nombreEmpresa(S.filtro) : '');
     $('u-lista').innerHTML = lista.map(function (u, i) {
       return '<li class="click" data-email="' + esc(u.email) + '"><div><div class="t">' + esc(u.nombre) + (u.esAdmin ? ' <span class="chip">admin</span>' : '') +
         (u.tienePin ? '' : ' <span class="chip">sin PIN</span>') + (u.sinGeocerca && u.perfil === 'Oficina' ? ' <span class="chip">ficha fuera</span>' : '') +
-        '</div><div class="m">' + esc(u.puesto ? u.puesto + ' · ' : '') + esc(u.email) + '</div></div>' +
+        '</div><div class="m">' + (multiempresa() && !S.filtro ? esc(nombreEmpresa(u.idEmpresa)) + ' · ' : '') + esc(u.puesto ? u.puesto + ' · ' : '') + esc(u.email) + '</div></div>' +
         '<span class="perfil ' + (u.activo ? esc(u.perfil) : 'baja') + '">' + (u.activo ? esc(u.perfil) : 'Baja') + '</span></li>';
     }).join('') || '<li class="m">Sin resultados.</li>';
     $('u-lista').querySelectorAll('li[data-email]').forEach(function (li) {
@@ -350,7 +373,12 @@
   $('u-nuevo').addEventListener('click', function () { editarEmpleado(null); });
 
   function editarEmpleado(email) {
-    var u = email ? S.empleados.filter(function (x) { return x.email === email; })[0] : { email: '', nombre: '', nif: '', perfil: 'Oficina', idSede: (S.sedesLista[0] || {}).id || '', activo: true };
+    var u = email ? S.empleados.filter(function (x) { return x.email === email; })[0]
+      : { email: '', nombre: '', nif: '', perfil: 'Oficina', idSede: (S.sedesLista[0] || {}).id || '', activo: true,
+          idEmpresa: S.filtro || ((S.empresas.filter(function (e) { return e.activa; })[0] || {}).id || '') };
+    var empOpts = S.empresas.filter(function (e) { return e.activa || e.id === u.idEmpresa; }).map(function (e) {
+      return '<option value="' + esc(e.id) + '"' + (e.id === u.idEmpresa ? ' selected' : '') + '>' + esc(e.nombre) + '</option>';
+    }).join('');
     var nuevo = !email;
     var sedesOpts = '<option value="">— Sin sede —</option>' + S.sedesLista.map(function (s) {
       return '<option value="' + esc(s.id) + '"' + (String(u.idSede) === s.id ? ' selected' : '') + '>' + esc(s.nombre) + ' (' + esc(s.id) + ')</option>';
@@ -360,6 +388,7 @@
       '<label for="m-email">Email de empresa</label><input id="m-email" type="email" value="' + esc(u.email) + '"' + (nuevo ? '' : ' disabled') + '>' +
       (nuevo ? '' : '<div class="m" style="margin-top:4px">El email no se puede cambiar porque identifica su histórico. Si cambia, da de baja y crea uno nuevo.</div>') +
       '<label for="m-nombre">Nombre completo</label><input id="m-nombre" value="' + esc(u.nombre) + '">' +
+      (multiempresa() ? '<label for="m-empresa">Empresa</label><select id="m-empresa">' + empOpts + '</select>' : '<select id="m-empresa" class="hidden">' + empOpts + '</select>') +
       '<label for="m-puesto">Puesto / profesión (aparece en los Excel)</label><input id="m-puesto" value="' + esc(u.puesto || '') + '" placeholder="Ej.: Arquitecto técnico">' +
       '<label for="m-nif">NIF (opcional, aparece en los Excel)</label><input id="m-nif" value="' + esc(u.nif || '') + '">' +
       '<div class="fila2"><div><label for="m-perfil">Perfil</label><select id="m-perfil">' +
@@ -379,7 +408,7 @@
     $('m-guardar').addEventListener('click', function () {
       var datos = { nuevo: nuevo, email: $('m-email').value.trim(), nombre: $('m-nombre').value.trim(), nif: $('m-nif').value.trim(),
                     perfil: $('m-perfil').value, idSede: $('m-sede').value, activo: $('m-activo').checked,
-                    puesto: $('m-puesto').value.trim(), sinGeocerca: $('m-fuera').checked };
+                    puesto: $('m-puesto').value.trim(), sinGeocerca: $('m-fuera').checked, idEmpresa: $('m-empresa').value };
       cargando(true);
       api({ action: 'adminGuardarUsuario', usuario: datos }).then(function (r) {
         if (r.pin) mostrarPin(datos.nombre, datos.email, r.pin); else { cerrarModal(); toast(r.mensaje); }
@@ -442,9 +471,10 @@
   });
   $('i-archivar').addEventListener('click', function () {
     var mes = $('i-mes').value;
-    if (!confirm('¿Archivar en Google Drive los informes de ' + $('i-mes').selectedOptions[0].textContent + '?\nSi ya existían, se sustituyen por los nuevos.')) return;
+    var quien = S.filtro ? nombreEmpresa(S.filtro) : (multiempresa() ? 'todas las empresas' : '');
+    if (!confirm('¿Archivar en Google Drive los informes de ' + $('i-mes').selectedOptions[0].textContent + (quien ? ' (' + quien + ')' : '') + '?\nSi ya existían, se sustituyen por los nuevos.')) return;
     cargando(true, 'Generando los Excel de cada empleado… puede tardar 2–3 minutos.');
-    api({ action: 'adminArchivarMes', mes: mes }).then(function (r) {
+    api({ action: 'adminArchivarMes', mes: mes, empresa: S.filtro }).then(function (r) {
       toast(r.mensaje, 7000);
       $('i-carpeta').innerHTML = '<a href="' + esc(r.carpetaUrl) + '" target="_blank" rel="noopener">Abrir la carpeta en Google Drive</a>';
     }).catch(function (e) { toast(e.message, 7000); }).finally(function () { cargando(false); });
@@ -457,7 +487,7 @@
   });
   $('e-descargar').addEventListener('click', function () {
     cargando(true);
-    api({ action: 'adminExport', desde: $('e-desde').value, hasta: $('e-hasta').value }).then(function (r) {
+    api({ action: 'adminExport', desde: $('e-desde').value, hasta: $('e-hasta').value, empresa: S.filtro }).then(function (r) {
       descargar(r.nombreArchivo, new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8' }));
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
@@ -466,7 +496,7 @@
   function cargarAjustes() {
     return api({ action: 'adminAjustes' }).then(function (r) {
       S.ajustes = r;
-      $('s-empresa').value = r.config.EMPRESA || ''; $('s-cif').value = r.config.CIF || '';
+      actualizarEmpresas(r.empresas); pintarEmpresas(r.empresas);
       $('s-prec').value = r.config.PRECISION_MAX_M; $('s-sesion').value = r.config.SESION_DIAS; $('s-hmax').value = r.config.HORAS_MAX_JORNADA_ABIERTA;
       $('i-auto').checked = !!r.archivoAuto;
       $('s-geocerca').checked = r.config.GEOCERCA_ACTIVA !== false;
@@ -478,7 +508,7 @@
       $('s-j-lj').value = r.config.JORNADA_LJ || '08:30'; $('s-j-v').value = r.config.JORNADA_V || '06:00';
       $('s-j-verano').value = r.config.JORNADA_VERANO || '07:00';
       $('s-v-desde').value = anio + '-' + (r.config.VERANO_DESDE || '07-01'); $('s-v-hasta').value = anio + '-' + (r.config.VERANO_HASTA || '08-31');
-      cargarLogo(r.logoVer); pintarLogoAjustes();
+
       if (r.carpetaUrl) $('i-carpeta').innerHTML = '<a href="' + esc(r.carpetaUrl) + '" target="_blank" rel="noopener">Abrir la carpeta de archivo en Google Drive</a>';
       pintarSedes(r.sedes);
     }).catch(function (e) { toast(e.message); });
@@ -521,11 +551,14 @@
   });
   $('s-guardar').addEventListener('click', function () {
     var sedes = leerSedes();
+    if (leerEmpresas().some(function (e) { return !e.nombre; })) return toast('Pon el nombre de todas las empresas.');
     var grandes = sedes.filter(function (s) { return s.radio > 300; });
     if (grandes.length && !confirm('El radio de ' + grandes.map(function (s) { return s.nombre || s.id; }).join(', ') +
         ' es de ' + grandes[0].radio + ' m. Con un radio tan grande se podría fichar «en la oficina» desde bastante lejos. ¿Guardar igualmente?')) return;
     cargando(true);
-    api({ action: 'adminGuardarAjustes', config: { EMPRESA: $('s-empresa').value, CIF: $('s-cif').value, PRECISION_MAX_M: num($('s-prec').value),
+    var emps = leerEmpresas();
+    if (emps.some(function (e) { return !e.nombre; })) return toast('Pon el nombre de todas las empresas.');
+    api({ action: 'adminGuardarAjustes', empresas: emps, config: { PRECISION_MAX_M: num($('s-prec').value),
           SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value),
           GEOCERCA_ACTIVA: $('s-geocerca').checked, RECORDATORIOS: $('s-recordatorios').checked,
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
@@ -543,15 +576,62 @@
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
 
-  // ----- Logo (ajustes) -----
-  function pintarLogoAjustes() {
-    var src = $('h-logo').getAttribute('src');
-    $('s-logo-prev').innerHTML = src ? '<img src="' + src + '" alt="Logo">' : 'Sin logo';
+  // ----- Empresas y logos (ajustes) -----
+  function pintarEmpresas(lista) {
+    $('s-empresas').innerHTML = lista.map(function (e) {
+      var nueva = e.existente === false;
+      return '<div class="empresa" data-id="' + esc(e.id) + '" data-nueva="' + (nueva ? '1' : '') + '">' +
+        '<label>Nombre / razón social</label><input class="em-nombre" value="' + esc(e.nombre || '') + '">' +
+        '<div class="fila2"><div><label>CIF</label><input class="em-cif" value="' + esc(e.cif || '') + '"></div>' +
+        '<div><label>&nbsp;</label><div class="interruptor" style="height:48px"><span>Activa</span><input type="checkbox" class="em-activa"' + (e.activa !== false ? ' checked' : '') + '></div></div></div>' +
+        '<label>Logo</label><div class="logo-prev em-logo">' + (nueva ? 'Guarda la empresa para poder subir su logo' : (e.logoId ? 'Cargando…' : 'Sin logo')) + '</div>' +
+        (nueva ? '' : '<div class="acciones" style="margin-top:0"><button class="btn sec peq em-subir">Subir logo</button><button class="btn peligro peq em-quitar">Quitar logo</button></div>') +
+        '</div>';
+    }).join('');
+    $('s-empresas').querySelectorAll('.empresa').forEach(function (div) {
+      var e = lista.filter(function (x) { return x.id === div.dataset.id; })[0];
+      if (!div.dataset.nueva && e.logoId) verLogoEmpresa(e.id, e.logoId, div.querySelector('.em-logo'));
+      var sub = div.querySelector('.em-subir'), qui = div.querySelector('.em-quitar');
+      if (sub) sub.addEventListener('click', function () { S.logoDestino = e.id; $('s-logo-file').click(); });
+      if (qui) qui.addEventListener('click', function () {
+        if (!confirm('¿Quitar el logo de ' + e.nombre + '?')) return;
+        cargando(true);
+        api({ action: 'adminBorrarLogo', idEmpresa: e.id }).then(function (r) {
+          toast(r.mensaje); if (e.id === S.usuario.idEmpresa) cargarLogo(null); return cargarAjustes();
+        }).catch(function (err) { toast(err.message); }).finally(function () { cargando(false); });
+      });
+    });
   }
-  $('s-logo-subir').addEventListener('click', function () { $('s-logo-file').click(); });
+  function verLogoEmpresa(id, logoId, cont) {
+    var pintar = function (src) { cont.innerHTML = src ? '<img src="' + src + '" alt="Logo">' : 'Sin logo'; };
+    if (S.logosEmp[logoId]) return pintar(S.logosEmp[logoId]);
+    api({ action: 'logo', idEmpresa: id }).then(function (r) {
+      var src = r.logo ? 'data:' + r.logo.mime + ';base64,' + r.logo.base64 : null;
+      if (src) S.logosEmp[logoId] = src;
+      pintar(src);
+    }).catch(function () { pintar(null); });
+  }
+  function leerEmpresas() {
+    return Array.prototype.map.call($('s-empresas').querySelectorAll('.empresa'), function (div) {
+      return { id: div.dataset.id, nombre: div.querySelector('.em-nombre').value.trim(), cif: div.querySelector('.em-cif').value.trim(),
+               activa: div.querySelector('.em-activa').checked };
+    });
+  }
+  $('s-emp-nueva').addEventListener('click', function () {
+    var actuales = leerEmpresas().map(function (e) {
+      var orig = S.empresas.filter(function (x) { return x.id === e.id; })[0] || {};
+      e.logoId = orig.logoId; e.existente = !!orig.id; return e;
+    });
+    var n = actuales.length + 1, ids = actuales.map(function (e) { return e.id; });
+    while (ids.indexOf('EMP' + n) >= 0) n++;
+    actuales.push({ id: 'EMP' + n, nombre: '', cif: '', activa: true, existente: false });
+    pintarEmpresas(actuales);
+    var campos = $('s-empresas').querySelectorAll('.em-nombre'); campos[campos.length - 1].focus();
+  });
   $('s-logo-file').addEventListener('change', function () {
     var f = this.files && this.files[0]; this.value = '';
-    if (!f) return;
+    var destino = S.logoDestino;
+    if (!f || !destino) return;
     if (!/^image\/(png|jpeg)$/.test(f.type)) return toast('El logo debe ser PNG o JPG.');
     var lector = new FileReader();
     lector.onload = function () {
@@ -565,22 +645,19 @@
         var png = f.type === 'image/png';
         var dataUrl = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.9);
         cargando(true, 'Subiendo logo…');
-        api({ action: 'adminSubirLogo', mime: png ? 'image/png' : 'image/jpeg', base64: dataUrl.split(',')[1] }).then(function (r) {
-          try { localStorage.setItem('fichaje_logo', JSON.stringify({ v: r.logoVer, src: dataUrl })); } catch (e) { /* */ }
-          pintarLogo(dataUrl); pintarLogoAjustes(); toast(r.mensaje);
+        api({ action: 'adminSubirLogo', idEmpresa: destino, mime: png ? 'image/png' : 'image/jpeg', base64: dataUrl.split(',')[1] }).then(function (r) {
+          S.logosEmp[r.logoVer] = dataUrl;
+          if (destino === S.usuario.idEmpresa) {
+            try { localStorage.setItem('fichaje_logo', JSON.stringify({ v: r.logoVer, src: dataUrl })); } catch (e) { /* */ }
+            pintarLogo(dataUrl);
+          }
+          toast(r.mensaje); return cargarAjustes();
         }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
       };
       img.onerror = function () { toast('No se pudo leer la imagen.'); };
       img.src = lector.result;
     };
     lector.readAsDataURL(f);
-  });
-  $('s-logo-borrar').addEventListener('click', function () {
-    if (!$('h-logo').getAttribute('src')) return toast('No hay logo.');
-    if (!confirm('¿Quitar el logo de la app y de los Excel?')) return;
-    cargando(true);
-    api({ action: 'adminBorrarLogo' }).then(function (r) { cargarLogo(null); pintarLogoAjustes(); toast(r.mensaje); })
-      .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
 
   // ----- Calendario -----
@@ -599,7 +676,14 @@
     var y = Number(S.calMes.slice(0, 4)), m = Number(S.calMes.slice(5, 7));
     $('cal-titulo').textContent = MESES[m - 1] + ' ' + y;
     pintarCalendario([]);
-    return api({ action: 'adminCalendario', mes: S.calMes }).then(function (r) { S.calDatos = r.entradas; pintarCalendario(r.entradas); })
+    return api({ action: 'adminCalendario', mes: S.calMes }).then(function (r) {
+      var emailsFiltro = {};
+      S.empleados.filter(deFiltro).forEach(function (u) { emailsFiltro[u.email.toLowerCase()] = true; });
+      S.calDatos = r.entradas.filter(function (e) {
+        return !S.filtro || e.email === 'TODOS' || e.email === 'EMP:' + S.filtro || emailsFiltro[e.email];
+      });
+      pintarCalendario(S.calDatos);
+    })
       .catch(function (e) { toast(e.message); });
   }
   function pintarCalendario(entradas) {
@@ -618,7 +702,7 @@
       var festivo = lista.some(function (e) { return e.tipo === 'FESTIVO'; });
       var cls = 'dia' + (dow >= 5 ? ' finde' : '') + (festivo ? ' festivo' : '') + (f === hoy ? ' hoy' : '');
       var ets = lista.slice(0, 2).map(function (e) {
-        var txt = e.tipo === 'FESTIVO' ? (e.nota || 'Festivo') : e.nombre.split(' ')[0];
+        var txt = e.tipo === 'FESTIVO' ? (e.nota || 'Festivo') + (e.email.indexOf('EMP:') === 0 && !S.filtro ? ' · ' + e.nombre : '') : e.nombre.split(' ')[0];
         return '<span class="et t-' + esc(e.tipo) + '">' + esc(txt) + '</span>';
       }).join('') + (lista.length > 2 ? '<span class="m" style="font-size:10px">+' + (lista.length - 2) + ' más</span>' : '');
       html += '<button class="' + cls + '" data-f="' + f + '"><span class="num">' + d + '</span>' + ets + '</button>';
@@ -654,14 +738,18 @@
 
   function formularioAusencia(fecha) {
     var hoy = fecha || hoyISO();
-    var activos = S.empleados.filter(function (u) { return u.activo; });
+    var activos = S.empleados.filter(function (u) { return u.activo && deFiltro(u); });
     abrirModal('<h2>Marcar días</h2>' +
       '<label>¿Qué es?</label><div class="tipos" id="f-tipos">' +
       Object.keys(TIPOS_CAL).map(function (k, i) {
-        return '<button data-t="' + k + '"' + (i === 0 && !fecha ? '' : '') + '>' + TIPOS_CAL[k] + (k === 'FESTIVO' ? '<div class="m" style="font-weight:400">toda la empresa</div>' : '') + '</button>';
+        return '<button data-t="' + k + '"' + (i === 0 && !fecha ? '' : '') + '>' + TIPOS_CAL[k] + (k === 'FESTIVO' ? '<div class="m" style="font-weight:400">' + (multiempresa() ? 'por empresa' : 'toda la empresa') + '</div>' : '') + '</button>';
       }).join('') + '</div>' +
       '<div class="fila2"><div><label for="f-desde">Desde</label><input id="f-desde" type="date" value="' + hoy + '"></div>' +
       '<div><label for="f-hasta">Hasta (incluido)</label><input id="f-hasta" type="date" value="' + hoy + '"></div></div>' +
+      (multiempresa() ? '<div id="f-empresa-fila" class="hidden"><label for="f-empresa">¿Para qué empresa?</label><select id="f-empresa">' +
+        '<option value="">Todas las empresas</option>' + S.empresas.filter(function (e) { return e.activa; }).map(function (e) {
+          return '<option value="' + esc(e.id) + '"' + (e.id === S.filtro ? ' selected' : '') + '>' + esc(e.nombre) + '</option>';
+        }).join('') + '</select></div>' : '') +
       '<div id="f-personas"><label>¿Quién?</label><div class="checks">' +
       '<label><input type="checkbox" id="f-todos"> <b>Seleccionar a todos</b></label>' +
       activos.map(function (u) { return '<label><input type="checkbox" class="f-emp" value="' + esc(u.email) + '"> ' + esc(u.nombre) + '</label>'; }).join('') +
@@ -675,6 +763,7 @@
         tipo = b.dataset.t;
         $('f-tipos').querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); });
         $('f-personas').classList.toggle('hidden', tipo === 'FESTIVO');
+        if ($('f-empresa-fila')) $('f-empresa-fila').classList.toggle('hidden', tipo !== 'FESTIVO');
       });
     });
     $('f-desde').addEventListener('change', function () { if ($('f-hasta').value < this.value) $('f-hasta').value = this.value; });
@@ -687,7 +776,8 @@
       var emails = Array.prototype.map.call($('modal-hoja').querySelectorAll('.f-emp:checked'), function (c) { return c.value; });
       if (tipo !== 'FESTIVO' && !emails.length) return toast('Marca al menos a una persona.');
       cargando(true);
-      api({ action: 'adminGuardarCalendario', tipo: tipo, desde: $('f-desde').value, hasta: $('f-hasta').value, emails: emails, nota: $('f-nota').value })
+      api({ action: 'adminGuardarCalendario', tipo: tipo, desde: $('f-desde').value, hasta: $('f-hasta').value, emails: emails, nota: $('f-nota').value,
+            empresa: $('f-empresa') ? $('f-empresa').value : '' })
         .then(function (r) { cerrarModal(); toast(r.mensaje); S.calMes = $('f-desde').value.slice(0, 7); return cargarCalendario(); })
         .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
     });

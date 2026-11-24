@@ -49,7 +49,7 @@
     .btn { width: 100%; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; background: var(--brand); color: #fff; }
     .btn.sec { background: var(--brand-soft); color: var(--brand); }
     .btn.peligro { background: var(--bad-bg); color: var(--bad); }
-    .btn.peq { width: auto; padding: 9px 14px; font-size: 14px; }
+    .btn.peq { width: auto; padding: 9px 14px; font-size: 14px; white-space: nowrap; }
     .btn:disabled { opacity: .45; cursor: not-allowed; }
     .fila2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
     .fila2 > div { min-width: 0; }
@@ -104,7 +104,7 @@
     .pin-grande { font-size: 40px; font-weight: 700; letter-spacing: 8px; text-align: center; font-variant-numeric: tabular-nums; margin: 10px 0; }
     .interruptor { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .interruptor input { width: 50px; height: 28px; accent-color: var(--brand); }
-    .sede { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 12px; }
+    .sede, .empresa { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 12px; }
     .marca { display: flex; align-items: center; gap: 12px; min-width: 0; }
     .marca img { height: 36px; max-width: 110px; object-fit: contain; background: #fff; border-radius: 8px; padding: 3px 6px; }
     .logo-prev { display: flex; align-items: center; justify-content: center; min-height: 90px; border: 1px dashed var(--line); border-radius: 12px; margin: 8px 0 12px; color: var(--muted); font-size: 14px; }
@@ -227,6 +227,9 @@
       </div>
 
       <div id="adm-contenido" class="hidden">
+        <div id="adm-filtro" class="hidden" style="margin-bottom:10px">
+          <select id="adm-empresa" aria-label="Empresa" style="font-weight:600"></select>
+        </div>
         <div class="segmentos" id="adm-seg">
           <button data-p="p-hoy" class="activo">Hoy</button>
           <button data-p="p-calendario">Calendario</button>
@@ -348,9 +351,11 @@
         <!-- AJUSTES -->
         <div id="p-ajustes" class="panel hidden">
           <div class="card">
-            <h2>Empresa</h2>
-            <label for="s-empresa">Razón social</label><input id="s-empresa">
-            <label for="s-cif">CIF</label><input id="s-cif">
+            <h2>Empresas</h2>
+            <p class="ayuda">Cada empleado pertenece a una empresa. Su nombre, CIF y logo salen en los Excel de sus trabajadores y en la app de cada uno.</p>
+            <div id="s-empresas"></div>
+            <input type="file" id="s-logo-file" accept="image/png,image/jpeg" class="hidden">
+            <button class="btn sec" id="s-emp-nueva" style="margin-top:12px">+ Añadir empresa</button>
           </div>
           <div class="card">
             <h2>Sedes y radio de fichaje</h2>
@@ -399,16 +404,6 @@
           </div>
           <button class="btn" id="s-guardar">Guardar ajustes</button>
           <div class="card" style="margin-top:14px">
-            <h2>Logo de la empresa</h2>
-            <p class="ayuda">Aparece en la app y en todos los Excel. PNG o JPG; se ajusta de tamaño automáticamente.</p>
-            <div class="logo-prev" id="s-logo-prev">Sin logo</div>
-            <input type="file" id="s-logo-file" accept="image/png,image/jpeg" class="hidden">
-            <div class="acciones" style="margin-top:0">
-              <button class="btn" id="s-logo-subir">Subir logo</button>
-              <button class="btn peligro" id="s-logo-borrar">Quitar</button>
-            </div>
-          </div>
-          <div class="card" style="margin-top:14px">
             <h2>Integridad del registro</h2>
             <p class="ayuda">Comprueba que nadie ha modificado a mano ningún fichaje en la hoja.</p>
             <button class="btn sec" id="s-integridad">Comprobar ahora</button>
@@ -449,7 +444,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=6"></script>
-  <script src="app.js?v=6"></script>
+  <script src="geo.js?v=7"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
