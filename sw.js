@@ -1,7 +1,7 @@
 /* Service worker: cachea solo la "carcasa" de la app para que abra al instante.
    Las llamadas a la API NUNCA se cachean: un fichaje siempre va al servidor en el momento. */
-var VERSION = 'fichaje-v2';
-var CARCASA = ['./', './index.html', './app.js', './geo.js', './config.js', './manifest.webmanifest',
+var VERSION = 'fichaje-v3';
+var CARCASA = ['./', './index.html', './app.js?v=3', './geo.js?v=3', './config.js', './manifest.webmanifest',
                './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
@@ -18,7 +18,9 @@ self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // API y terceros: directo a red
   // Red primero (para recibir actualizaciones), caché si no hay conexión
-  e.respondWith(fetch(e.request).then(function (r) {
+  // cache:'no-cache' obliga a comprobar con GitHub que el archivo no ha cambiado (evita versiones viejas)
+  var peticion = e.request.mode === 'navigate' ? fetch(e.request.url, { cache: 'no-cache' }) : fetch(e.request, { cache: 'no-cache' });
+  e.respondWith(peticion.then(function (r) {
     var copia = r.clone();
     caches.open(VERSION).then(function (c) { c.put(e.request, copia); });
     return r;
