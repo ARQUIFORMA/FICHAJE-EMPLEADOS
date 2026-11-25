@@ -445,7 +445,11 @@
           </div>
           <div class="card">
             <h2>Todos los empleados de golpe</h2>
-            <p class="ayuda">Descarga un ZIP con el Excel de cada empleado del mes elegido arriba (de la empresa seleccionada, o de todas).</p>
+            <p class="ayuda">Un ZIP con el Excel de cada empleado activo (de la empresa elegida arriba, o de todas). Se generan de uno en uno y verás el progreso: con 27 personas tarda unos 2–3 minutos.</p>
+            <div class="fila2">
+              <div><label for="z-mes">Mes</label><select id="z-mes"></select></div>
+              <div><label for="z-anio">Año</label><select id="z-anio"></select></div>
+            </div>
             <label for="z-formato">Qué Excel</label>
             <select id="z-formato">
               <option value="inspeccion">Solo los de la Inspección</option>
@@ -485,9 +489,10 @@
             <div id="v-pendientes"></div>
           </div>
           <div class="card">
-            <h2>Días de cada empleado (este año)</h2>
-            <p class="ayuda">Disponibles = asignados − ya aprobados (disfrutados o programados) − pendientes. Los días de cada uno se cambian en Personal.</p>
-            <div style="overflow-x:auto"><table class="tabla" id="v-saldos"></table></div>
+            <h2>Días de cada empleado · <span id="v-anio"></span></h2>
+            <p class="ayuda">Quedan = días del año − aprobados (disfrutados o programados) − pendientes. Los no disfrutados caducan al acabar el año, salvo que los pases al siguiente. La base de cada uno se cambia en Personal.</p>
+            <div id="v-sobras-aviso"></div>
+            <div id="v-saldos"></div>
             <button class="btn sec" id="v-cierre" style="margin-top:14px">Marcar cierre de empresa (vacaciones para todos)</button>
             <p class="m" style="margin-top:6px">Ej.: del 15 al 31 de agosto o del 22 de diciembre al 7 de enero. Se descuenta a todos los marcados; los festivos y fines de semana no cuentan.</p>
           </div>
@@ -674,7 +679,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="geo.js?v=16"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

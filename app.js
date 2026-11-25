@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v8: correcciones solicitadas, avisos por email) */
+/* app.js — PWA de fichaje (v9: almuerzo/comida, ZIP en el navegador, vacaciones del año anterior) */
 (function () {
   'use strict';
 
@@ -7,7 +7,30 @@
             precisionMax: 100, pos: null, geo: null, timerGps: null, offset: 0, empleados: [], sedesLista: [], ajustes: null,
             calMes: null, calDatos: null, empresas: [], filtro: '', logosEmp: {}, logoDestino: null };
   var $ = function (id) { return document.getElementById(id); };
-  var ETQ = { ENTRADA: 'Entrada', INICIO_PAUSA: 'Inicio pausa', FIN_PAUSA: 'Fin pausa', SALIDA: 'Salida' };
+  var ETQ = { ENTRADA: 'Entrada', INICIO_PAUSA: 'Inicio pausa', FIN_PAUSA: 'Fin pausa', SALIDA: 'Salida',
+              INICIO_ALMUERZO: 'Inicio almuerzo', FIN_ALMUERZO: 'Fin almuerzo', INICIO_COMIDA: 'Inicio comida', FIN_COMIDA: 'Fin comida' };
+  var TIPOS_ELEGIBLES = ['ENTRADA', 'INICIO_ALMUERZO', 'FIN_ALMUERZO', 'INICIO_COMIDA', 'FIN_COMIDA', 'SALIDA'];
+  var HORA_COMIDA = 13; // antes de las 13:00 es almuerzo (cuenta como trabajo); desde las 13:00, comida
+  /** Etiqueta de un fichaje: la del servidor si la trae; si no, por la hora (almuerzo antes de las 13:00). */
+  function etq(f) {
+    if (f.etiqueta) return f.etiqueta;
+    if (f.tipo === 'INICIO_PAUSA' || f.tipo === 'FIN_PAUSA') {
+      var h = f.fechaHora ? new Date(f.fechaHora).getHours() : Number(String(f.hora || '0').split(':')[0]);
+      return (f.tipo === 'INICIO_PAUSA' ? 'Inicio ' : 'Fin ') + (h < HORA_COMIDA ? 'almuerzo' : 'comida');
+    }
+    return ETQ[f.tipo] || f.tipo;
+  }
+  /** Para elegir en los formularios: «Inicio pausa» de un fichaje ya guardado → almuerzo o comida. */
+  function tipoConNombre(f) {
+    var e = etq(f).toUpperCase().replace(' ', '_');
+    return TIPOS_ELEGIBLES.indexOf(e) >= 0 ? e : f.tipo;
+  }
+  function validarTipoHora(tipo, hora) {
+    var h = Number(String(hora || '0').split(':')[0]);
+    if (tipo === 'INICIO_ALMUERZO' && h >= HORA_COMIDA) return 'El almuerzo empieza antes de las 13:00. A partir de esa hora es la comida.';
+    if (tipo === 'INICIO_COMIDA' && h < HORA_COMIDA) return 'La comida empieza a partir de las 13:00. Antes es el almuerzo.';
+    return '';
+  }
   var EST = { FUERA: 'Fuera de jornada', DENTRO: 'Trabajando', PAUSA: 'En pausa' };
   var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
@@ -205,7 +228,7 @@
       if ($('b-pedir-corr')) $('b-pedir-corr').addEventListener('click', function () {
         var ja = r.jornadaAbierta;
         mostrar('v-vacaciones'); abrirSolTab('sol-cor');
-        $('co-fecha').value = ja.fecha; itemsCorreccion([{ tipo: ja.tipo === 'INICIO_PAUSA' ? 'FIN_PAUSA' : 'SALIDA', hora: '' }]);
+        $('co-fecha').value = ja.fecha; itemsCorreccion([{ tipo: ja.tipo === 'INICIO_PAUSA' ? 'FIN_COMIDA' : 'SALIDA', hora: '' }]);
         if (ja.tipo !== 'INICIO_PAUSA') { var d = new Date(ja.fecha + 'T12:00:00').getDay(); $('co-items').querySelector('.co-hora').value = d === 5 ? '14:00' : '17:30'; }
       });
       cargarLogo(r.logoVer);
@@ -253,7 +276,7 @@
     else bp.classList.add('hidden');
     actualizarBoton();
     $('c-ultimo').innerHTML = ultimo
-      ? '<div class="m">Último fichaje</div><div style="font-size:16px;margin-top:4px"><b>' + esc(ETQ[ultimo.tipo]) + '</b> · ' +
+      ? '<div class="m">Último fichaje</div><div style="font-size:16px;margin-top:4px"><b>' + esc(etq(ultimo)) + '</b> · ' +
         esc(fechaLarga(ultimo.fechaHora)) + ' a las ' + esc(hora(ultimo.fechaHora)) + '</div>'
       : '<div class="m">Aún no tienes fichajes.</div>';
   }
@@ -320,7 +343,7 @@
       if (navigator.vibrate) navigator.vibrate(80);
       aplicarEstado(r.estado, r.permitidos, r.fichaje);
       var c = leerEstadoLocal(); if (c) { c.estado = r.estado; c.permitidos = r.permitidos; c.ultimo = r.fichaje; c.jornadaAbierta = null; guardarEstadoLocal(c); }
-      toast('✔ ' + ETQ[r.fichaje.tipo] + ' registrada a las ' + hora(r.fichaje.fechaHora));
+      toast('✔ ' + etq(r.fichaje) + ' registrada a las ' + hora(r.fichaje.fechaHora));
     }).catch(function (e) { toast(e.message, 6000); })
       .finally(function () { cargando(false); });
   }
@@ -335,7 +358,7 @@
   setInterval(tic, 1000); tic();
 
   // ---------- Historial e informe propio ----------
-  opcionesMeses($('h-mes'), 24);
+  opcionesMeses($('h-mes'), 12); // el empleado solo puede descargar los últimos 12 meses
   function cargarHistorial() {
     var ul = $('l-historial'); ul.innerHTML = '<li class="m">Cargando…</li>';
     api({ action: 'historial', limite: 40 }).then(function (r) {
@@ -343,7 +366,7 @@
       ul.innerHTML = r.fichajes.map(function (f) {
         var extra = f.maps ? ' · <a href="' + esc(f.maps) + '" target="_blank" rel="noopener">ver mapa</a>' : '';
         var origen = f.origen === 'CORRECCION' ? ' <span class="chip">manual</span>' : '';
-        return '<li><div><div class="t">' + esc(ETQ[f.tipo]) + origen + '</div><div class="m">' + esc(fechaLarga(f.fechaHora)) +
+        return '<li><div><div class="t">' + esc(etq(f)) + origen + '</div><div class="m">' + esc(fechaLarga(f.fechaHora)) +
                ' · ' + esc(f.modalidad) + extra + '</div></div><div class="t">' + esc(hora(f.fechaHora)) + '</div></li>';
       }).join('');
     }).catch(function (e) { ul.innerHTML = '<li class="m">' + esc(e.message) + '</li>'; });
@@ -406,7 +429,7 @@
         .map(function (k) { return '<div class="kpi"><b>' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('');
       $('a-filas').innerHTML = r.filas.map(function (f) {
         var mapas = f.fichajes.filter(function (x) { return x.maps; }).map(function (x) {
-          return '<a href="' + esc(x.maps) + '" target="_blank" rel="noopener">' + esc(ETQ[x.tipo]) + ' ' + esc(hora(x.fechaHora)) + '</a>' +
+          return '<a href="' + esc(x.maps) + '" target="_blank" rel="noopener">' + esc(etq(x)) + ' ' + esc(hora(x.fechaHora)) + '</a>' +
                  (x.direccion ? ' (' + esc(x.direccion) + ')' : '');
         }).join('<br>');
         var manual = f.fichajes.some(function (x) { return x.origen === 'CORRECCION'; }) ? ' · <span class="chip">manual</span>' : '';
@@ -618,7 +641,7 @@
         (d.ausencia ? '<span class="chip">' + esc(d.ausencia) + '</span> ' : '') + esc(d.horas || (vacio && !d.ausencia ? 'sin fichajes' : '')) + '</span></div>' +
         (d.incidencia ? '<div class="inc" style="font-size:13px;margin-top:2px">' + esc(d.incidencia) + '</div>' : '') +
         d.fichajes.map(function (f) {
-          return '<div class="fj' + (f.anulado ? ' anulado' : '') + '"' + (f.motivo ? ' title="' + esc(f.motivo) + '"' : '') + '><div><b>' + esc(f.hora) + '</b> ' + esc(ETQ[f.tipo]) +
+          return '<div class="fj' + (f.anulado ? ' anulado' : '') + '"' + (f.motivo ? ' title="' + esc(f.motivo) + '"' : '') + '><div><b>' + esc(f.hora) + '</b> ' + esc(etq(f)) +
             (f.origen === 'CORRECCION' && !f.anulado ? ' <span class="chip">manual</span>' : '') +
             (f.anulado ? ' <span class="chip">anulado</span>' : '') +
             (f.motivo ? '<div class="m" style="text-decoration:none">' + esc(f.motivo) + '</div>' : '') + '</div>' +
@@ -636,20 +659,21 @@
     $('c-dias').querySelectorAll('[data-jornada]').forEach(function (b) { b.addEventListener('click', function () { modalJornada(b.dataset.jornada); }); });
   }
   function opcionesTipo(sel) {
-    return Object.keys(ETQ).map(function (k) { return '<option value="' + k + '"' + (k === sel ? ' selected' : '') + '>' + ETQ[k] + '</option>'; }).join('');
+    return TIPOS_ELEGIBLES.map(function (k) { return '<option value="' + k + '"' + (k === sel ? ' selected' : '') + '>' + ETQ[k] + '</option>'; }).join('');
   }
   /** Editar (f) o añadir (f = null) un fichaje de un día. */
   function modalFichaje(fecha, f) {
     abrirModal('<h2>' + (f ? 'Editar fichaje' : 'Añadir fichaje') + '</h2><p class="ayuda">' + esc(S.fichajesNombre) + ' · ' + esc(fechaCorta(fecha)) +
-      (f ? '<br>Original: ' + esc(ETQ[f.tipo]) + ' a las ' + esc(f.hora) + '. Quedará guardado como anulado y sustituido.' : '') + '</p>' +
+      (f ? '<br>Original: ' + esc(etq(f)) + ' a las ' + esc(f.hora) + '. Quedará guardado como anulado y sustituido.' : '') + '</p>' +
       '<div class="fila2"><div><label for="mf-hora">Hora</label><input id="mf-hora" type="time" value="' + esc(f ? f.hora : '') + '"></div>' +
-      '<div><label for="mf-tipo">Tipo</label><select id="mf-tipo">' + opcionesTipo(f ? f.tipo : 'SALIDA') + '</select></div></div>' +
+      '<div><label for="mf-tipo">Tipo</label><select id="mf-tipo">' + opcionesTipo(f ? tipoConNombre(f) : 'SALIDA') + '</select></div></div>' +
       '<label for="mf-motivo">Motivo (obligatorio)</label><textarea id="mf-motivo" placeholder="Ej.: olvidó fichar la salida; confirmado por el empleado."></textarea>' +
       '<div class="acciones"><button class="btn sec" id="mf-no">Cancelar</button><button class="btn" id="mf-ok">Guardar</button></div>');
     $('mf-no').addEventListener('click', cerrarModal);
     $('mf-ok').addEventListener('click', function () {
       var hora = $('mf-hora').value, motivo = $('mf-motivo').value.trim();
       if (!hora) return toast('Pon la hora.');
+      var malTipo = validarTipoHora($('mf-tipo').value, hora); if (malTipo) return toast(malTipo, 6000);
       if (motivo.length < 5) return toast('Escribe el motivo.');
       cargando(true);
       var p = f ? api({ action: 'adminModificarFichaje', id: f.id, hora: hora, tipo: $('mf-tipo').value, motivo: motivo })
@@ -659,7 +683,7 @@
     });
   }
   function modalAnular(fecha, f) {
-    abrirModal('<h2>Anular fichaje</h2><p class="ayuda">' + esc(S.fichajesNombre) + ' · ' + esc(fechaCorta(fecha)) + ' · <b>' + esc(ETQ[f.tipo]) + ' ' + esc(f.hora) +
+    abrirModal('<h2>Anular fichaje</h2><p class="ayuda">' + esc(S.fichajesNombre) + ' · ' + esc(fechaCorta(fecha)) + ' · <b>' + esc(etq(f)) + ' ' + esc(f.hora) +
       '</b><br>Deja de contar en las horas y en los Excel, pero queda guardado (anulado) con tu nombre y el motivo.</p>' +
       '<label for="ma-motivo">Motivo (obligatorio)</label><textarea id="ma-motivo" placeholder="Ej.: fichaje duplicado por error."></textarea>' +
       '<div class="acciones"><button class="btn sec" id="ma-no">Cancelar</button><button class="btn peligro" id="ma-ok">Anular</button></div>');
@@ -677,7 +701,7 @@
     var dow = new Date(fecha + 'T12:00:00').getDay();
     var mm = fecha.slice(5, 10), cf = (S.ajustes && S.ajustes.config) || {}, verano = mm >= (cf.VERANO_DESDE || '07-01') && mm <= (cf.VERANO_HASTA || '08-31');
     var filas = verano ? [['ENTRADA', '08:00'], ['SALIDA', '15:00']] : dow === 5 ? [['ENTRADA', '08:00'], ['SALIDA', '14:00']]
-      : [['ENTRADA', '08:00'], ['INICIO_PAUSA', '14:00'], ['FIN_PAUSA', '15:00'], ['SALIDA', '17:30']];
+      : [['ENTRADA', '08:00'], ['INICIO_COMIDA', '14:00'], ['FIN_COMIDA', '15:00'], ['SALIDA', '17:30']];
     abrirModal('<h2>Jornada completa</h2><p class="ayuda">' + esc(S.fichajesNombre) + ' · ' + esc(fechaCorta(fecha)) + '. Revisa las horas antes de guardar.</p>' +
       filas.map(function (x, i) {
         return '<div class="fila2"><div><select class="mj-tipo">' + opcionesTipo(x[0]) + '</select></div><div><input class="mj-hora" type="time" value="' + x[1] + '"></div></div>' + '<div style="height:8px"></div>';
@@ -692,6 +716,7 @@
       var lista = [];
       for (var i = 0; i < tipos.length; i++) if (horas[i].value) lista.push({ tipo: tipos[i].value, hora: horas[i].value });
       lista.sort(function (a, b) { return a.hora < b.hora ? -1 : 1; });
+      for (var k = 0; k < lista.length; k++) { var mt = validarTipoHora(lista[k].tipo, lista[k].hora); if (mt) return toast(mt, 6000); }
       cargando(true, 'Guardando…');
       var email = $('c-empleado').value;
       lista.reduce(function (p, x) {
@@ -710,12 +735,92 @@
     api({ action: 'adminInforme', email: $('i-empleado').value, mes: $('i-mes').value, formato: $('i-formato').value }).then(descargarXlsx)
       .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
+  // Selector de mes y año para la descarga de todos
+  (function () {
+    var d = new Date(), y = d.getFullYear();
+    $('z-mes').innerHTML = MESES.map(function (m, i) { return '<option value="' + ('0' + (i + 1)).slice(-2) + '">' + m.charAt(0).toUpperCase() + m.slice(1) + '</option>'; }).join('');
+    var anios = ''; for (var a = y; a >= y - 4; a--) anios += '<option>' + a + '</option>';
+    $('z-anio').innerHTML = anios;
+    d.setDate(1); d.setMonth(d.getMonth() - 1); // por defecto, el mes pasado
+    $('z-mes').value = ('0' + (d.getMonth() + 1)).slice(-2); $('z-anio').value = String(d.getFullYear());
+  })();
+
+  // ZIP mínimo (sin compresión: los .xlsx ya van comprimidos) armado en el propio dispositivo
+  var CRC = (function () { var t = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function crearZip(archivos) {
+    var enc = new TextEncoder(), partes = [], central = [], off = 0;
+    var ah = new Date(), hDos = (ah.getHours() << 11) | (ah.getMinutes() << 5) | (ah.getSeconds() >> 1),
+        fDos = ((ah.getFullYear() - 1980) << 9) | ((ah.getMonth() + 1) << 5) | ah.getDate();
+    var u16 = function (v) { return [v & 255, (v >>> 8) & 255]; }, u32 = function (v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; };
+    archivos.forEach(function (a) {
+      var nom = enc.encode(a.nombre), crc = crc32(a.datos), tam = a.datos.length;
+      var cab = [].concat([0x50, 0x4b, 3, 4], u16(20), u16(0x0800), u16(0), u16(hDos), u16(fDos), u32(crc), u32(tam), u32(tam), u16(nom.length), u16(0));
+      partes.push(new Uint8Array(cab), nom, a.datos);
+      central.push(new Uint8Array([].concat([0x50, 0x4b, 1, 2], u16(20), u16(20), u16(0x0800), u16(0), u16(hDos), u16(fDos), u32(crc), u32(tam), u32(tam),
+        u16(nom.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), nom);
+      off += cab.length + nom.length + tam;
+    });
+    var tamC = central.reduce(function (t, x) { return t + x.length; }, 0);
+    var fin = new Uint8Array([].concat([0x50, 0x4b, 5, 6], u16(0), u16(0), u16(archivos.length), u16(archivos.length), u32(tamC), u32(off), u16(0)));
+    return new Blob(partes.concat(central, [fin]), { type: 'application/zip' });
+  }
+  function b64aBytes(b64) { var bin = atob(b64), r = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) r[i] = bin.charCodeAt(i); return r; }
+
   $('z-descargar').addEventListener('click', function () {
-    var quien = S.filtro ? nombreEmpresa(S.filtro) : 'todos los empleados';
-    cargando(true, 'Generando los Excel de ' + quien + '… puede tardar 1–3 minutos.');
-    api({ action: 'adminDescargarMes', mes: $('i-mes').value, formato: $('z-formato').value, empresa: S.filtro }).then(function (r) {
-      descargarBase64(r, 'application/zip'); toast(r.archivos + ' archivos descargados en un ZIP.');
-    }).catch(function (e) { toast(e.message, 8000); }).finally(function () { cargando(false); });
+    var mes = $('z-anio').value + '-' + $('z-mes').value, formato = $('z-formato').value;
+    if (mes > hoyISO().slice(0, 7)) return toast('Ese mes todavía no ha llegado.');
+    cargarEmpleados().then(function () {
+      var gente = S.empleados.filter(function (u) { return u.activo && deFiltro(u); })
+        .sort(function (a, b) { return a.nombre.localeCompare(b.nombre, 'es'); });
+      if (!gente.length) return toast('No hay empleados activos.');
+      var multi = !S.filtro && multiempresa();
+      var limpio = function (t) { return String(t).replace(/[\\\/:*?"<>|]/g, '').trim() || 'Empresa'; };
+      var tareas = [];
+      gente.forEach(function (u) {
+        if (formato !== 'completo') tareas.push({ u: u, f: 'inspeccion' });
+        if (formato !== 'inspeccion') tareas.push({ u: u, f: 'completo' });
+      });
+      var archivos = [], fallos = [], resumen = {}, hechas = 0, i = 0, parar = false;
+      $('z-descargar').disabled = true;
+      cargando(true);
+      var txt = function () { $('cargando-txt').textContent = 'Generando Excel ' + hechas + ' de ' + tareas.length + '… (no cierres la app)'; };
+      txt();
+      function siguiente() {
+        if (parar || i >= tareas.length) return Promise.resolve();
+        var t = tareas[i++];
+        var carpeta = (multi ? limpio(nombreEmpresa(t.u.idEmpresa)) + '/' : '') + (formato === 'ambos' ? (t.f === 'completo' ? 'Completo/' : 'Inspección/') : '');
+        return api({ action: 'adminInforme', email: t.u.email, mes: mes, formato: t.f }).then(function (r) {
+          archivos.push({ nombre: carpeta + r.nombreArchivo, datos: b64aBytes(r.base64) });
+          if (r.totales) (resumen[t.u.idEmpresa || ''] = resumen[t.u.idEmpresa || ''] || []).push({ nombre: t.u.nombre, nif: t.u.nif, email: t.u.email, puesto: t.u.puesto,
+            dias: r.totales.dias, minutos: r.totales.minutos, extra: r.totales.extra, incidencias: r.totales.incidencias });
+        }).catch(function (e) {
+          if (/Introduce tu PIN/.test(e.message)) parar = true;
+          fallos.push(t.u.nombre + ': ' + e.message);
+        }).then(function () { hechas++; txt(); return siguiente(); });
+      }
+      // 2 a la vez: más rápido sin que Google frene las exportaciones
+      Promise.all([siguiente(), siguiente()]).then(function () {
+        if (parar) throw new Error('El panel se ha cerrado por tiempo. Vuelve a abrirlo e inténtalo de nuevo.');
+        $('cargando-txt').textContent = 'Generando el resumen…';
+        return Promise.all(Object.keys(resumen).map(function (idEmp) {
+          var carpeta = (multi ? limpio(nombreEmpresa(idEmp)) + '/' : '') + (formato === 'ambos' ? 'Completo/' : '');
+          return api({ action: 'adminResumenMes', mes: mes, empresa: idEmp, filas: resumen[idEmp] })
+            .then(function (r) { archivos.push({ nombre: carpeta + r.nombreArchivo, datos: b64aBytes(r.base64) }); })
+            .catch(function (e) { fallos.push('Resumen: ' + e.message); });
+        }));
+      }).then(function () {
+        if (!archivos.length) throw new Error('No se pudo generar ningún Excel. ' + (fallos[0] || ''));
+        archivos.sort(function (a, b) { return a.nombre.localeCompare(b.nombre, 'es'); });
+        descargar('Registro_jornada_' + mes + (formato === 'ambos' ? '' : '_' + formato) + '.zip', crearZip(archivos));
+        if (fallos.length) {
+          abrirModal('<h2>ZIP descargado con avisos</h2><p class="ayuda">' + archivos.length + ' archivos descargados. No se pudieron generar:</p><div class="aviso warn">' +
+            fallos.map(esc).join('<br>') + '</div><p class="m">Puedes descargarlos uno a uno arriba.</p><button class="btn" id="zf-ok">Entendido</button>');
+          $('zf-ok').addEventListener('click', cerrarModal);
+        } else toast('✔ ZIP con ' + archivos.length + ' archivos descargado.', 6000);
+      }).catch(function (e) { toast(e.message, 9000); })
+        .finally(function () { cargando(false); $('z-descargar').disabled = false; });
+    });
   });
   $('i-archivar').addEventListener('click', function () {
     var mes = $('i-mes').value;
@@ -1049,7 +1154,7 @@
       '<label><input type="checkbox" id="f-todos"> <b>Seleccionar a todos</b></label>' +
       activos.map(function (u) { return '<label><input type="checkbox" class="f-emp" value="' + esc(u.email) + '"> ' + esc(u.nombre) + '</label>'; }).join('') +
       '</div></div>' +
-      '<label for="f-nota">Nota (opcional)</label><input id="f-nota" placeholder="Ej.: Fiestas patronales, operación de rodilla…">' +
+      '<label for="f-nota">Nota (opcional)</label><input id="f-nota" placeholder="Ej.: Fiestas patronales (no pongas datos médicos)">' +
       '<p class="m" style="margin-top:8px">Los sábados y domingos se saltan automáticamente (salvo en festivos).</p>' +
       '<div class="acciones"><button class="btn sec" id="f-cancelar">Cancelar</button><button class="btn" id="f-guardar">Guardar</button></div>');
     var tipo = null;
@@ -1100,7 +1205,8 @@
       $('vac-disp-txt').textContent = (s.disponibles === 1 ? 'día disponible' : 'días disponibles') + ' en ' + s.anio;
       $('vac-kpis').innerHTML = [['Al año', s.asignados], ['Ya disfrutados', s.disfrutados], ['Aprobados y pendientes de disfrutar', s.programados + (s.pendientes ? ' + ' + s.pendientes + '*' : '')]]
         .map(function (k) { return '<div class="kpi"><b>' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('');
-      $('vac-periodos').innerHTML = (s.periodos.length ? '<b>Tus vacaciones de ' + s.anio + ':</b> ' + s.periodos.map(function (p) {
+      var extra = (s.ajustes || []).map(function (a) { return (a.dias > 0 ? '+' : '') + a.dias + ' ' + esc(a.motivo); });
+      $('vac-periodos').innerHTML = (extra.length ? '<b>Tus ' + s.asignados + ' días incluyen:</b> ' + s.base + ' del año' + extra.map(function (t) { return ' · ' + t; }).join('') + '<br>' : '') + (s.periodos.length ? '<b>Tus vacaciones de ' + s.anio + ':</b> ' + s.periodos.map(function (p) {
         return txtPeriodo(p.desde, p.hasta) + ' (' + p.dias + ')'; }).join(' · ') : 'Aún no tienes vacaciones aprobadas este año.') +
         (s.pendientes ? '<br>* ' + s.pendientes + ' días en solicitudes pendientes de aprobar.' : '');
       $('vac-lista').innerHTML = r.solicitudes.map(function (x) {
@@ -1204,13 +1310,13 @@
   $('co-fecha').value = hoyISO();
   $('co-mas').addEventListener('click', function () {
     var l = leerItems(); if (l.length >= 6) return;
-    var sig = { ENTRADA: 'SALIDA', SALIDA: 'ENTRADA', INICIO_PAUSA: 'FIN_PAUSA', FIN_PAUSA: 'SALIDA' }[l[l.length - 1].tipo] || 'SALIDA';
+    var sig = { ENTRADA: 'SALIDA', SALIDA: 'ENTRADA', INICIO_ALMUERZO: 'FIN_ALMUERZO', FIN_ALMUERZO: 'SALIDA', INICIO_COMIDA: 'FIN_COMIDA', FIN_COMIDA: 'SALIDA' }[l[l.length - 1].tipo] || 'SALIDA';
     l.push({ tipo: sig, hora: '' }); itemsCorreccion(l);
   });
   function cargarCorrecciones() {
     api({ action: 'misCorrecciones' }).then(function (r) {
       $('co-lista').innerHTML = r.solicitudes.map(function (x) {
-        return '<li><div><div class="t">' + esc(fechaCorta(x.fecha)) + '</div><div class="m">' + x.items.map(function (i) { return esc(ETQ[i.tipo] + ' ' + i.hora); }).join(', ') +
+        return '<li><div><div class="t">' + esc(fechaCorta(x.fecha)) + '</div><div class="m">' + x.items.map(function (i) { return esc((ETQ[i.tipo] || i.tipo) + ' ' + i.hora); }).join(', ') +
           '</div>' + (x.respuesta ? '<div class="m"><b>Respuesta:</b> ' + esc(x.respuesta) + '</div>' : '') + '</div>' +
           '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><span class="chip est-' + esc(x.estado) + '">' + esc(x.estadoTxt) + '</span>' +
           (x.estado === 'PENDIENTE' ? '<button class="btn sec peq" data-cc="' + esc(x.id) + '">Cancelar</button>' : '') + '</div></li>';
@@ -1229,6 +1335,7 @@
     var items = leerItems().filter(function (x) { return x.hora; });
     if (!$('co-fecha').value) return toast('Elige el día.');
     if (!items.length) return toast('Pon la hora de lo que falta.');
+    for (var k = 0; k < items.length; k++) { var mt = validarTipoHora(items[k].tipo, items[k].hora); if (mt) return toast(mt, 6000); }
     if ($('co-motivo').value.trim().length < 5) return toast('Explica brevemente qué pasó.');
     cargando(true, 'Enviando…');
     api({ action: 'solicitarCorreccion', fecha: $('co-fecha').value, items: items, motivo: $('co-motivo').value.trim() }).then(function (r) {
@@ -1244,7 +1351,7 @@
       $('co-pend-card').classList.toggle('hidden', !n);
       $('co-pend').innerHTML = r.pendientes.map(function (x) {
         return '<div class="fila-admin"><div class="cab"><b>' + esc(x.nombre) + '</b><span class="m">' + esc(fechaCorta(x.fecha)) + '</span></div>' +
-          '<div class="det">Añadir: <b>' + x.items.map(function (i) { return esc(ETQ[i.tipo] + ' ' + i.hora); }).join(', ') + '</b><br>«' + esc(x.motivo) + '»</div>' +
+          '<div class="det">Añadir: <b>' + x.items.map(function (i) { return esc((ETQ[i.tipo] || i.tipo) + ' ' + i.hora); }).join(', ') + '</b><br>«' + esc(x.motivo) + '»</div>' +
           '<div class="acciones" style="margin-top:10px"><button class="btn sec peq" data-cv="' + esc(x.id) + '">Ver el día</button>' +
           '<button class="btn peligro peq" data-cr="' + esc(x.id) + '">Rechazar</button><button class="btn peq" data-ca="' + esc(x.id) + '">Aceptar</button></div></div>';
       }).join('');
@@ -1263,7 +1370,7 @@
     }).catch(function () {});
   }
   function resolverCorreccion(x, aprobar) {
-    var txt = x.items.map(function (i) { return ETQ[i.tipo] + ' ' + i.hora; }).join(', ');
+    var txt = x.items.map(function (i) { return (ETQ[i.tipo] || i.tipo) + ' ' + i.hora; }).join(', ');
     abrirModal('<h2>' + (aprobar ? 'Aceptar' : 'Rechazar') + ' corrección</h2><p class="ayuda"><b>' + esc(x.nombre) + '</b> · ' + esc(fechaCorta(x.fecha)) + '<br>' + esc(txt) +
       (aprobar ? '<br>Se añadirá como fichaje manual con el motivo del empleado y tu nombre.' : '') + '</p>' +
       '<label for="rc-txt">' + (aprobar ? 'Mensaje (opcional)' : 'Explica por qué no (obligatorio)') + '</label><textarea id="rc-txt"></textarea>' +
@@ -1351,15 +1458,62 @@
       var buscar = function (id) { return r.pendientes.filter(function (x) { return x.id === id; })[0]; };
       $('v-pendientes').querySelectorAll('[data-apr]').forEach(function (b) { b.addEventListener('click', function () { resolverSolicitud(buscar(b.dataset.apr), true); }); });
       $('v-pendientes').querySelectorAll('[data-den]').forEach(function (b) { b.addEventListener('click', function () { resolverSolicitud(buscar(b.dataset.den), false); }); });
-      $('v-saldos').innerHTML = '<tr><th>Empleado</th><th>Al año</th><th>Usados</th><th>Pend.</th><th>Quedan</th></tr>' + r.saldos.map(function (x) {
-        return '<tr><td>' + esc(x.nombre) + '</td><td>' + x.asignados + '</td><td>' + x.usados + '</td><td>' + (x.pendientes || '') + '</td><td><b' +
-          (x.disponibles < 0 ? ' style="color:var(--bad)"' : '') + '>' + x.disponibles + '</b></td></tr>';
-      }).join('');
+      S.saldosVac = r.saldos;
+      $('v-anio').textContent = r.anio;
+      var conSobras = r.saldos.filter(function (x) { return x.sobrantesAnterior > 0 && !x.yaPasados; }).length;
+      $('v-sobras-aviso').innerHTML = conSobras
+        ? '<div class="aviso info">' + conSobras + (conSobras === 1 ? ' persona no disfrutó' : ' personas no disfrutaron') + ' todos sus días de ' + (r.anio - 1) +
+          '. Por defecto caducan; si quieres respetárselos, pulsa «Pasar a ' + r.anio + '».</div>' : '';
+      $('v-saldos').innerHTML = r.saldos.map(function (x, i) {
+        var otros = x.ajustes.filter(function (a) { return a.tipo !== 'ARRASTRE'; });
+        return '<div class="fila-admin"><div class="cab"><b>' + esc(x.nombre) + '</b><span>Quedan <b style="font-size:18px' + (x.disponibles < 0 ? ';color:var(--bad)' : '') + '">' + x.disponibles + '</b></span></div>' +
+          '<div class="det">' + x.asignados + ' al año' + (x.asignados !== x.base ? ' (' + x.base + (x.arrastrados ? ' + ' + x.arrastrados + ' de ' + (r.anio - 1) : '') +
+          otros.map(function (a) { return ' ' + (a.dias > 0 ? '+ ' : '− ') + Math.abs(a.dias) + ' ' + esc(a.motivo); }).join('') + ')' : '') +
+          ' · usados ' + x.usados + (x.pendientes ? ' · pendientes ' + x.pendientes : '') +
+          (x.sobrantesAnterior > 0 ? '<br>Sin disfrutar de ' + (r.anio - 1) + ': <b>' + x.sobrantesAnterior + '</b>' + (x.yaPasados ? ' · ya pasados' : '') : '') + '</div>' +
+          '<div class="mini">' + (x.sobrantesAnterior > 0 && !x.yaPasados ? '<button data-pasar="' + i + '">Pasar ' + x.sobrantesAnterior + ' a ' + r.anio + '</button>' : '') +
+          '<button data-ajus="' + i + '">± Ajustar días</button></div></div>';
+      }).join('') || '<p class="m">No hay empleados.</p>';
+      $('v-saldos').querySelectorAll('[data-pasar]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var x = r.saldos[Number(b.dataset.pasar)];
+          if (!confirm('¿Pasar a ' + x.nombre + ' los ' + x.sobrantesAnterior + ' días que no disfrutó en ' + (r.anio - 1) + '? Se suman a sus días de ' + r.anio + '.')) return;
+          cargando(true);
+          api({ action: 'adminAjusteVacaciones', email: x.email, anio: r.anio, dias: x.sobrantesAnterior, tipo: 'ARRASTRE' })
+            .then(function (k) { toast(k.mensaje); return cargarSolicitudes(); }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+        });
+      });
+      $('v-saldos').querySelectorAll('[data-ajus]').forEach(function (b) { b.addEventListener('click', function () { ajustarVac(r.saldos[Number(b.dataset.ajus)], r.anio); }); });
       $('v-resueltas').innerHTML = r.resueltas.map(function (x) {
         return '<li><div><div class="t">' + esc(x.nombre) + '</div><div class="m">' + esc(txtPeriodo(x.desde, x.hasta)) + ' · ' + x.dias + ' días' +
           (x.respuesta ? ' · ' + esc(x.respuesta) : '') + '</div></div><span class="chip est-' + esc(x.estado) + '">' + esc(x.estadoTxt) + '</span></li>';
       }).join('') || '<li class="m">Ninguna todavía.</li>';
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  }
+  function ajustarVac(x, anio) {
+    var lista = x.ajustes.map(function (a) {
+      return '<li><span>' + (a.dias > 0 ? '+' : '') + a.dias + ' · ' + esc(a.motivo) + '</span><button class="btn peligro peq" data-borra="' + esc(a.id) + '">Quitar</button></li>';
+    }).join('');
+    abrirModal('<h2>Días de ' + esc(x.nombre) + ' en ' + anio + '</h2><p class="ayuda">Base: ' + x.base + ' días. Suma días (antigüedad, convenio, días de otro año) o réstalos.</p>' +
+      (lista ? '<ul class="lista">' + lista + '</ul>' : '') +
+      '<div class="fila2"><div><label for="aj-dias">Días (− para restar)</label><input id="aj-dias" type="number" inputmode="numeric" step="1" placeholder="2"></div>' +
+      '<div><label for="aj-mot">Motivo</label><input id="aj-mot" placeholder="Ej.: antigüedad"></div></div>' +
+      '<div class="acciones"><button class="btn sec" id="aj-no">Cerrar</button><button class="btn" id="aj-ok">Añadir</button></div>');
+    $('aj-no').addEventListener('click', cerrarModal);
+    $('aj-ok').addEventListener('click', function () {
+      var d = Number($('aj-dias').value);
+      if (!d) return toast('Pon el número de días.');
+      cargando(true);
+      api({ action: 'adminAjusteVacaciones', email: x.email, anio: anio, dias: d, motivo: $('aj-mot').value.trim() })
+        .then(function (k) { cerrarModal(); toast(k.mensaje); return cargarSolicitudes(); }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+    });
+    $('modal-hoja').querySelectorAll('[data-borra]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        cargando(true);
+        api({ action: 'adminBorrarAjusteVac', id: b.dataset.borra }).then(function (k) { cerrarModal(); toast(k.mensaje); return cargarSolicitudes(); })
+          .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+      });
+    });
   }
   function resolverSolicitud(x, aprobar) {
     abrirModal('<h2>' + (aprobar ? 'Aprobar' : 'Denegar') + ' vacaciones</h2><p class="ayuda"><b>' + esc(x.nombre) + '</b> · ' + esc(txtPeriodo(x.desde, x.hasta)) + ' · ' + x.dias + ' días</p>' +
