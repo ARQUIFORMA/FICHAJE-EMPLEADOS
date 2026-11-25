@@ -894,6 +894,69 @@
     });
   }
 
+  // ---------- Aviso «Instala la app en tu móvil» ----------
+  // No sale si ya se abre desde el icono, si este móvil ya la tiene instalada o si pulsó «Ahora no» hace menos de 30 días.
+  (function avisoInstalar() {
+    var caja = $('aviso-instalar');
+    var lsGet = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+    var lsSet = function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* modo privado */ } };
+    var instalada = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    if (instalada) { lsSet('fichaje_instalada', '1'); return; }          // abierta desde el icono
+    if (lsGet('fichaje_instalada') === '1') return;                      // ya se instaló en este móvil
+    if (Date.now() - Number(lsGet('fichaje_instalar_no') || 0) < 30 * 864e5) return;
+
+    var ua = navigator.userAgent;
+    var ios = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var safari = ios && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|GSA|FBAN|FBAV|Instagram|WhatsApp/.test(ua);
+    var android = /android/i.test(ua);
+    if (!ios && !android) return;                                         // en el ordenador no hace falta
+    var evento = null;
+    var botonNo = '<button class="btn sec peq" id="inst-no">Ahora no</button>';
+
+    function mostrar(html) {
+      caja.innerHTML = '<div class="card instalar"><img src="icon-192.png" alt=""><div style="flex:1">' +
+        '<b>📲 Instala la app en tu móvil</b><p class="m" style="margin:2px 0 0">Tendrás un icono «Fichaje» en la pantalla de inicio y entrarás directo a fichar.</p>' +
+        html + '</div></div>';
+      var no = $('inst-no');
+      if (no) no.addEventListener('click', function () { lsSet('fichaje_instalar_no', String(Date.now())); caja.innerHTML = ''; });
+      var si = $('inst-si');
+      if (si) si.addEventListener('click', function () {
+        if (!evento) return;
+        evento.prompt();
+        evento.userChoice.then(function (r) { evento = null; if (r.outcome === 'accepted') caja.innerHTML = ''; });
+      });
+    }
+    function quitarYConfirmar() { lsSet('fichaje_instalada', '1'); caja.innerHTML = ''; toast('✅ App instalada: búscala como «Fichaje» en tu pantalla de inicio.'); }
+    window.addEventListener('appinstalled', quitarYConfirmar);
+
+    function seguir() {
+      if (ios) {
+        mostrar(safari
+          ? '<ol><li>Toca el botón <b>Compartir</b> ⬆️ (en iPhones nuevos está dentro de <b>···</b>).</li><li>Elige <b>«Añadir a pantalla de inicio»</b>.</li><li>Pulsa <b>Añadir</b>.</li></ol><div class="bt">' + botonNo + '</div>'
+          : '<p class="m" style="margin:6px 0 0">Para instalarla, ábrela en <b>Safari</b> (toca ··· o el icono de la brújula › «Abrir en Safari»).</p><div class="bt">' + botonNo + '</div>');
+        return;
+      }
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault(); evento = e;
+        mostrar('<div class="bt"><button class="btn peq" id="inst-si">Instalar app</button>' + botonNo + '</div>');
+      });
+      // Navegadores que no lanzan ese evento (Samsung Internet, Firefox…): pasos a mano
+      setTimeout(function () {
+        if (!evento && !caja.innerHTML) {
+          mostrar('<ol><li>Abre el menú <b>⋮</b> (o ☰) del navegador.</li><li>Elige <b>«Instalar aplicación»</b> o <b>«Añadir a pantalla de inicio»</b>.</li></ol><div class="bt">' + botonNo + '</div>');
+        }
+      }, 4000);
+    }
+
+    // Android con Chrome: comprueba si la app ya está instalada aunque se abra desde el navegador
+    if (navigator.getInstalledRelatedApps) {
+      navigator.getInstalledRelatedApps().then(function (apps) {
+        if (apps && apps.length) { lsSet('fichaje_instalada', '1'); return; }
+        seguir();
+      }).catch(seguir);
+    } else seguir();
+  })();
+
   // ---------- Arranque ----------
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
   S.token = leerToken();
