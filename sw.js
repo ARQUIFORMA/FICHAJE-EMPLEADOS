@@ -1,7 +1,7 @@
-/* Service worker: cachea solo la "carcasa" de la app para que abra al instante.
+/* Service worker: la "carcasa" de la app se sirve al instante desde la caché y se actualiza por detrás.
    Las llamadas a la API NUNCA se cachean: un fichaje siempre va al servidor en el momento. */
-var VERSION = 'fichaje-v13';
-var CARCASA = ['./', './index.html', './app.js?v=13', './geo.js?v=13', './config.js', './manifest.webmanifest',
+var VERSION = 'fichaje-v14';
+var CARCASA = ['./', './index.html', './app.js?v=14', './geo.js?v=14', './config.js', './manifest.webmanifest',
                './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
@@ -17,12 +17,14 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // API y terceros: directo a red
-  // Red primero (para recibir actualizaciones), caché si no hay conexión
-  // cache:'no-cache' obliga a comprobar con GitHub que el archivo no ha cambiado (evita versiones viejas)
-  var peticion = e.request.mode === 'navigate' ? fetch(e.request.url, { cache: 'no-cache' }) : fetch(e.request, { cache: 'no-cache' });
-  e.respondWith(peticion.then(function (r) {
-    var copia = r.clone();
-    caches.open(VERSION).then(function (c) { c.put(e.request, copia); });
+  var clave = e.request.mode === 'navigate' ? './index.html' : e.request;
+  // cache:'no-cache' obliga a preguntar a GitHub si el archivo cambió (así nunca se queda una versión vieja)
+  var red = fetch(e.request.mode === 'navigate' ? e.request.url : e.request, { cache: 'no-cache' }).then(function (r) {
+    if (r && r.ok) { var copia = r.clone(); caches.open(VERSION).then(function (c) { c.put(clave, copia); }); }
     return r;
-  }).catch(function () { return caches.match(e.request).then(function (r) { return r || caches.match('./index.html'); }); }));
+  });
+  e.respondWith(caches.match(clave).then(function (enCache) {
+    if (enCache) { e.waitUntil(red.catch(function () {})); return enCache; } // al instante; la red actualiza para la próxima vez
+    return red.catch(function () { return caches.match('./index.html'); });
+  }));
 });
