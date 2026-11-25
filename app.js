@@ -86,17 +86,53 @@
   }
 
   function abrirModal(html) { $('modal-hoja').innerHTML = html; $('modal').classList.remove('hidden'); }
-  function cerrarModal() { $('modal').classList.add('hidden'); $('modal-hoja').innerHTML = ''; }
-  $('modal').addEventListener('click', function (e) { if (e.target.id === 'modal') cerrarModal(); });
+  function cerrarModal() { S.modalFijo = false; $('modal').classList.add('hidden'); $('modal-hoja').innerHTML = ''; }
+  $('modal').addEventListener('click', function (e) { if (e.target.id === 'modal' && !S.modalFijo) cerrarModal(); });
 
   // ---------- Navegación ----------
   function mostrar(vista) {
-    ['v-login', 'v-fichar', 'v-historial', 'v-admin', 'v-ajustes'].forEach(function (v) { $(v).classList.toggle('hidden', v !== vista); });
+    ['v-login', 'v-fichar', 'v-historial', 'v-admin', 'v-ajustes', 'v-coches'].forEach(function (v) { $(v).classList.toggle('hidden', v !== vista); });
+    var enCoches = vista === 'v-coches';
+    document.body.classList.toggle('en-coches', enCoches);
+    $('h-volver').classList.toggle('hidden', !enCoches);
+    $('h-perfil').classList.toggle('hidden', enCoches || !S.usuario);
+    if (enCoches) abrirCoches(); else if ($('coches-frame')) $('coches-frame').classList.add('hidden');
     document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('activo', b.dataset.v === vista); });
     if (vista === 'v-historial') cargarHistorial();
     if (vista === 'v-admin') { if (S.adminToken) abrirPanel('p-hoy'); else setTimeout(function () { $('adm-pin').focus(); }, 50); }
   }
   document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { mostrar(b.dataset.v); }); });
+
+  // ---------- Coches: la app de reservas va dentro de esta, con la misma sesión ----------
+  var COCHES_URL = CFG.COCHES_URL || 'https://arquiforma.github.io/RESERVAR-COCHES/';
+  function abrirCoches(seccion) {
+    var f = $('coches-frame');
+    if (!f) {
+      f = document.createElement('iframe');
+      f.id = 'coches-frame'; f.title = 'Coches';
+      f.setAttribute('allow', 'camera; geolocation');
+      f.src = COCHES_URL + '?embebida=1#' + (seccion || 'llaves');
+      document.body.appendChild(f);
+    } else if (seccion) {
+      try { f.contentWindow.location.hash = seccion; } catch (e) { f.src = COCHES_URL + '?embebida=1#' + seccion; }
+    }
+    colocarCoches(f);
+    f.classList.remove('hidden');
+  }
+  $('h-volver').addEventListener('click', function () { mostrar('v-fichar'); });
+  function colocarCoches(f) {
+    var top = document.querySelector('header').offsetHeight;
+    f.style.top = top + 'px';
+    f.style.height = (window.innerHeight - top) + 'px';
+  }
+  window.addEventListener('resize', function () { var f = $('coches-frame'); if (f) colocarCoches(f); });
+  /** Deja a la app de coches (mismo dominio) la sesión y la dirección del servidor de Fichaje. */
+  function compartirSesion() {
+    try {
+      localStorage.setItem('fichaje_api', CFG.API_URL);
+      localStorage.setItem('fichaje_url', location.href.split('#')[0].split('?')[0]);
+    } catch (e) { /* */ }
+  }
 
   // ---------- Sesión ----------
   function guardarToken(t) { try { localStorage.setItem('fichaje_token', t); } catch (e) { /* */ } }
@@ -104,6 +140,7 @@
   function cerrarSesionLocal() {
     try { localStorage.removeItem('fichaje_token'); } catch (e) { /* */ }
     S.token = null; S.adminToken = null; pararGps();
+    var cf = $('coches-frame'); if (cf) cf.remove();
     $('nav').classList.add('hidden'); $('h-perfil').classList.add('hidden');
     $('h-titulo').textContent = 'Fichaje'; $('h-sub').textContent = CFG.EMPRESA || 'Registro de jornada';
     mostrar('v-login');
@@ -121,6 +158,7 @@
   function iniciar() {
     return api({ action: 'estado' }).then(function (r) {
       S.usuario = r.usuario; S.sede = r.sede; S.precisionMax = r.precisionMax;
+      compartirSesion();
       S.offset = new Date(r.horaServidor).getTime() - Date.now();
       aplicarEstado(r.estado, r.permitidos, r.ultimo);
       $('h-titulo').textContent = r.usuario.nombre;
@@ -136,7 +174,9 @@
         : '';
       cargarLogo(r.logoVer);
       prepararGeo();
-      mostrar('v-fichar');
+      var h = location.hash.slice(1);
+      if (h === 'coches' || h === 'llaves' || h === 'reservar') { mostrar('v-coches'); abrirCoches(h === 'coches' ? 'llaves' : h); }
+      else mostrar('v-fichar');
     });
   }
 
@@ -304,6 +344,7 @@
     if (id === 'p-calendario') cargarEmpleados().then(cargarCalendario);
     if (id === 'p-personal' || id === 'p-corregir' || id === 'p-informes') cargarEmpleados();
     if (id === 'p-informes' || id === 'p-ajustes') cargarAjustes();
+    if (id === 'p-ajustes') cargarCoches();
   }
   document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.addEventListener('click', function () { abrirPanel(b.dataset.p); }); });
 
@@ -371,6 +412,39 @@
   }
   $('u-buscar').addEventListener('input', pintarEmpleados);
   $('u-nuevo').addEventListener('click', function () { editarEmpleado(null); });
+  $('u-pin-todos').addEventListener('click', function () {
+    var quien = S.filtro ? 'los empleados de ' + nombreEmpresa(S.filtro) : 'todos los empleados activos';
+    if (!confirm('¿Generar un PIN nuevo de 6 cifras para ' + quien + '?\n\nSus PIN actuales (también los de Coches) dejarán de funcionar y tendrán que volver a entrar. Tu PIN no cambia.')) return;
+    if (!confirm('Confirma: la lista de PIN solo se mostrará una vez. Descárgala antes de cerrarla.')) return;
+    cargando(true, 'Generando PIN…');
+    api({ action: 'adminNuevoPinTodos', empresa: S.filtro }).then(function (r) { mostrarListaPins(r); cargarEmpleados(); })
+      .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+  });
+
+  function mostrarListaPins(r) {
+    var url = location.href.split('#')[0].split('?')[0];
+    var filas = [['Nombre', 'Email', 'Empresa', 'PIN']].concat(r.lista.map(function (x) { return [x.nombre, x.email, x.empresa, x.pin]; }));
+    var csv = filas.map(function (f) { return f.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
+    abrirModal('<h2>PIN nuevos</h2><p class="ayuda">' + esc(r.mensaje) + ' Descarga la lista ahora: por seguridad no se vuelve a mostrar.</p>' +
+      '<ul class="lista">' + r.lista.map(function (x, i) {
+        return '<li><div><div class="t">' + esc(x.nombre) + '</div><div class="m">' + esc(x.email) + '</div></div>' +
+               '<div style="display:flex;gap:8px;align-items:center"><b style="font-size:18px;letter-spacing:2px">' + esc(x.pin) + '</b>' +
+               (navigator.share ? '<button class="btn sec peq" data-i="' + i + '">Enviar</button>' : '') + '</div></li>';
+      }).join('') + '</ul>' +
+      '<div class="acciones"><button class="btn sec" id="lp-csv">Descargar lista (Excel)</button><button class="btn" id="lp-ok">Hecho</button></div>');
+    S.modalFijo = true;
+    $('lp-csv').addEventListener('click', function () {
+      descargar('PIN_nuevos_' + hoyISO() + '.csv', new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    });
+    $('lp-ok').addEventListener('click', function () { if (confirm('¿Has guardado la lista? No se volverá a mostrar.')) cerrarModal(); });
+    $('modal-hoja').querySelectorAll('button[data-i]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var x = r.lista[Number(b.dataset.i)];
+        navigator.share({ text: 'Hola ' + x.nombre + ', tu nuevo PIN para Fichaje y Coches es ' + x.pin +
+          '.\nApp: ' + url + '\nUsuario: ' + x.email + '\nNo lo compartas.' }).catch(function () {});
+      });
+    });
+  }
 
   function editarEmpleado(email) {
     var u = email ? S.empleados.filter(function (x) { return x.email === email; })[0]
@@ -574,6 +648,29 @@
     api({ action: 'adminIntegridad' }).then(function (r) {
       $('s-integridad-res').innerHTML = '<div class="aviso ' + (r.integro ? 'ok' : 'bad') + '">' + esc(r.mensaje) + '</div>';
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  });
+
+  // ----- Conexión con Coches -----
+  function pintarCoches(r) {
+    $('k-api').value = r.api || '';
+    $('k-estado').innerHTML = '<div class="aviso ' + (r.conectado ? 'ok' : 'warn') + '">' + esc(r.mensaje) + '</div>' +
+      (r.faltan && r.faltan.length ? '<p class="m">No están en Coches: ' + esc(r.faltan.join(', ')) + '</p>' : '');
+  }
+  function cargarCoches() {
+    $('k-estado').innerHTML = '<p class="m">Comprobando conexión…</p>';
+    return api({ action: 'adminCoches' }).then(pintarCoches).catch(function (e) { $('k-estado').innerHTML = '<div class="aviso warn">' + esc(e.message) + '</div>'; });
+  }
+  $('k-guardar').addEventListener('click', function () {
+    cargando(true, 'Comprobando con la app de coches…');
+    api({ action: 'adminGuardarCoches', api: $('k-api').value.trim(), pin: $('k-pin').value.trim() })
+      .then(function (r) { $('k-pin').value = ''; pintarCoches(r); toast(r.conectado ? 'Conexión con Coches guardada.' : r.mensaje); })
+      .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+  });
+  $('k-sync').addEventListener('click', function () {
+    if (!confirm('¿Añadir a la lista de Coches a los empleados activos que aún no están? No se quita a nadie.')) return;
+    cargando(true);
+    api({ action: 'adminSincronizarCoches' }).then(function (r) { toast(r.mensaje, 6000); return cargarCoches(); })
+      .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
   });
 
   // ----- Empresas y logos (ajustes) -----
