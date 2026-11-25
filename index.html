@@ -286,7 +286,7 @@
             <input id="u-buscar" type="search" placeholder="Buscar por nombre o email" style="margin-top:12px">
             <ul class="lista" id="u-lista" style="margin-top:6px"></ul>
             <button class="btn peligro" id="u-pin-todos" style="margin-top:14px">Nuevo PIN para todos</button>
-            <p class="m" style="margin-top:6px">Genera un PIN de 6 cifras para cada empleado activo (de la empresa elegida arriba, o de todas). Tu PIN no cambia. Los PIN anteriores, también los de Coches, dejan de funcionar.</p>
+            <p class="m" style="margin-top:6px">Genera un PIN de 6 cifras para cada empleado activo (de la empresa elegida arriba, o de todas). Tu PIN no cambia. Los PIN anteriores dejan de funcionar; si el PIN único de Coches está activado, también los antiguos de 4 cifras de Coches.</p>
           </div>
         </div>
 
@@ -411,8 +411,12 @@
           </div>
           <button class="btn" id="s-guardar">Guardar ajustes</button>
           <div class="card" style="margin-top:14px">
-            <h2>Conexión con la app de coches</h2>
-            <p class="ayuda">Así los trabajadores usan Coches con el mismo email y PIN de Fichaje. El administrador de Coches sigue siendo el de siempre, con su propio PIN.</p>
+            <h2>App de coches</h2>
+            <div class="interruptor" style="margin-bottom:10px">
+              <div><h3>Entrar en Coches con el PIN de Fichaje</h3><div class="m">Activado: en Coches cada trabajador elige su nombre y escribe su PIN de 6 cifras de Fichaje (y también puede abrir Coches desde aquí). Desactivado: Coches funciona como siempre, con su propio PIN de 4 cifras.</div></div>
+              <input type="checkbox" id="k-unico" aria-label="PIN único para Coches">
+            </div>
+            <p class="ayuda">El administrador de Coches sigue siendo el de siempre, con su propio PIN. Para activar el PIN único hace falta la conexión de abajo.</p>
             <div id="k-estado"></div>
             <label for="k-api">Dirección del script de Coches (termina en /exec)</label><input id="k-api" inputmode="url">
             <label for="k-pin">PIN de administrador de Coches</label><input id="k-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Solo si quieres cambiarlo">
@@ -454,7 +458,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Fichar</button>
     <button data-v="v-historial">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Historial</button>
-    <button data-v="v-coches">
+    <button data-v="v-coches" id="nav-coches" class="hidden">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 17h14M6 17v2M18 17v2M4 13l2-6h12l2 6v4H4z"/><circle cx="8" cy="14" r="1"/><circle cx="16" cy="14" r="1"/></svg>Coches</button>
     <button data-v="v-admin" id="nav-admin" class="hidden">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Admin</button>
@@ -467,7 +471,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=10"></script>
-  <script src="app.js?v=10"></script>
+  <script src="geo.js?v=11"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

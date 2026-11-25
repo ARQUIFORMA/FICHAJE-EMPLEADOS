@@ -166,6 +166,7 @@
       var p = $('h-perfil'); p.textContent = r.usuario.perfil; p.className = 'perfil ' + r.usuario.perfil;
       $('nav').classList.remove('hidden');
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
+      $('nav-coches').classList.toggle('hidden', !r.cochesUnico);
       $('aj-nombre').textContent = r.usuario.nombre; $('aj-email').textContent = r.usuario.email;
       $('aj-perfil').textContent = r.usuario.perfil; $('aj-sede').textContent = r.sede ? r.sede.nombre + ' (radio ' + r.sede.radio + ' m)' : '—';
       $('aviso-jornada').innerHTML = r.jornadaAbierta
@@ -175,7 +176,7 @@
       cargarLogo(r.logoVer);
       prepararGeo();
       var h = location.hash.slice(1);
-      if (h === 'coches' || h === 'llaves' || h === 'reservar') { mostrar('v-coches'); abrirCoches(h === 'coches' ? 'llaves' : h); }
+      if (r.cochesUnico && (h === 'coches' || h === 'llaves' || h === 'reservar')) { mostrar('v-coches'); abrirCoches(h === 'coches' ? 'llaves' : h); }
       else mostrar('v-fichar');
     });
   }
@@ -653,6 +654,8 @@
   // ----- Conexión con Coches -----
   function pintarCoches(r) {
     $('k-api').value = r.api || '';
+    $('k-unico').checked = !!r.unico;
+    $('nav-coches').classList.toggle('hidden', !r.unico);
     $('k-estado').innerHTML = '<div class="aviso ' + (r.conectado ? 'ok' : 'warn') + '">' + esc(r.mensaje) + '</div>' +
       (r.faltan && r.faltan.length ? '<p class="m">No están en Coches: ' + esc(r.faltan.join(', ')) + '</p>' : '');
   }
@@ -665,6 +668,17 @@
     api({ action: 'adminGuardarCoches', api: $('k-api').value.trim(), pin: $('k-pin').value.trim() })
       .then(function (r) { $('k-pin').value = ''; pintarCoches(r); toast(r.conectado ? 'Conexión con Coches guardada.' : r.mensaje); })
       .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+  });
+  $('k-unico').addEventListener('change', function () {
+    var activar = this.checked, chk = this;
+    var aviso = activar
+      ? '¿Activar el PIN único?\n\nEn Coches, cada trabajador entrará eligiendo su nombre y con su PIN de 6 cifras de Fichaje. Asegúrate de que los nombres coinciden en las dos apps.'
+      : '¿Desactivar el PIN único?\n\nCoches volverá a pedir su propio PIN de 4 cifras. Si los cambiaste con «Nuevo PIN para todos», los trabajadores no los conocen: consúltalos o cámbialos en el Admin de Coches y repártelos.';
+    if (!confirm(aviso)) { chk.checked = !activar; return; }
+    cargando(true);
+    api({ action: 'adminGuardarCoches', unico: activar }).then(function (r) {
+      pintarCoches(r); toast(activar ? 'PIN único para Coches activado.' : 'PIN único desactivado: Coches vuelve a su PIN de siempre.', 6000);
+    }).catch(function (e) { chk.checked = !activar; toast(e.message, 6000); }).finally(function () { cargando(false); });
   });
   $('k-sync').addEventListener('click', function () {
     if (!confirm('¿Añadir a la lista de Coches a los empleados activos que aún no están? No se quita a nadie.')) return;
