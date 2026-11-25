@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v7: horas extra, más rápida) */
+/* app.js — PWA de fichaje (v8: correcciones solicitadas, avisos por email) */
 (function () {
   'use strict';
 
@@ -104,7 +104,7 @@
     if (enCoches) abrirCoches(); else if ($('coches-frame')) $('coches-frame').classList.add('hidden');
     document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('activo', b.dataset.v === vista); });
     if (vista === 'v-historial') cargarHistorial();
-    if (vista === 'v-vacaciones') { if (S.solTab === 'sol-he') cargarHorasExtra(); else cargarVacaciones(); }
+    if (vista === 'v-vacaciones') abrirSolTab(S.solTab || 'sol-vac');
     if (vista === 'v-ajustes') cargarMisNominas();
     if (vista === 'v-admin') { if (S.adminToken) abrirPanel('p-hoy'); else setTimeout(function () { $('adm-pin').focus(); }, 50); }
   }
@@ -199,8 +199,15 @@
       $('aj-perfil').textContent = r.usuario.perfil; $('aj-sede').textContent = r.sede ? r.sede.nombre + ' (radio ' + r.sede.radio + ' m)' : '—';
       $('aviso-jornada').innerHTML = r.jornadaAbierta
         ? '<div class="aviso warn">Tu jornada del ' + esc(fechaCorta(r.jornadaAbierta.fecha)) + ' quedó sin ' +
-          (r.jornadaAbierta.tipo === 'INICIO_PAUSA' ? 'terminar la pausa' : 'fichar la salida') + '. Avisa a administración para que lo corrija.</div>'
+          (r.jornadaAbierta.tipo === 'INICIO_PAUSA' ? 'terminar la pausa' : 'fichar la salida') + '.' +
+          '<div style="margin-top:8px"><button class="btn sec peq" id="b-pedir-corr">Pedir la corrección</button></div></div>'
         : '';
+      if ($('b-pedir-corr')) $('b-pedir-corr').addEventListener('click', function () {
+        var ja = r.jornadaAbierta;
+        mostrar('v-vacaciones'); abrirSolTab('sol-cor');
+        $('co-fecha').value = ja.fecha; itemsCorreccion([{ tipo: ja.tipo === 'INICIO_PAUSA' ? 'FIN_PAUSA' : 'SALIDA', hora: '' }]);
+        if (ja.tipo !== 'INICIO_PAUSA') { var d = new Date(ja.fecha + 'T12:00:00').getDay(); $('co-items').querySelector('.co-hora').value = d === 5 ? '14:00' : '17:30'; }
+      });
       cargarLogo(r.logoVer);
       if (!provisional && !yaPintado) prepararGeo();
       else if (provisional) { S.geo = null; actualizarBoton(); }
@@ -382,6 +389,7 @@
     if (id === 'p-nominas') cargarNominas();
     if (id === 'p-ajustes' || (id === 'p-informes' && !S.ajustes)) cargarAjustes();
     if (id === 'p-extra') cargarHorasExtraAdmin();
+    if (id === 'p-corregir') cargarCorreccionesAdmin();
     if (id === 'p-ajustes') cargarCoches();
   }
   document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.addEventListener('click', function () { abrirPanel(b.dataset.p); }); });
@@ -743,6 +751,9 @@
       $('s-recordatorios').checked = !!r.config.RECORDATORIOS;
       $('s-vac').value = r.config.VACACIONES_DIAS == null ? 22 : r.config.VACACIONES_DIAS;
       $('s-nominas').checked = !!r.config.NOMINAS_ACTIVAS;
+      $('s-emails').value = r.config.EMAIL_AVISOS || '';
+      $('s-email-info').innerHTML = 'Ahora llegan a: <b>' + esc((r.config.emailsAvisoEfectivos || []).join(', ')) + '</b>' +
+        (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
       $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
       $('s-h-salida').value = r.config.HORA_AVISO_SALIDA || '18:00';
       $('s-h-viernes').value = r.config.HORA_AVISO_SALIDA_VIERNES || '14:30';
@@ -755,6 +766,11 @@
       pintarSedes(r.sedes);
     }).catch(function (e) { toast(e.message); });
   }
+  $('s-probar').addEventListener('click', function () {
+    cargando(true, 'Enviando email de prueba…');
+    api({ action: 'adminProbarEmail' }).then(function (r) { toast(r.mensaje, 8000); })
+      .catch(function (e) { toast(e.message, 12000); }).finally(function () { cargando(false); cargarAjustes(); });
+  });
   function pintarSedes(sedes) {
     $('s-sedes').innerHTML = sedes.map(function (s, i) {
       var mapa = isFinite(s.lat) && isFinite(s.lng) ? 'https://www.google.com/maps?q=' + s.lat + ',' + s.lng : '';
@@ -803,7 +819,7 @@
     api({ action: 'adminGuardarAjustes', empresas: emps, config: { PRECISION_MAX_M: num($('s-prec').value),
           SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value),
           GEOCERCA_ACTIVA: $('s-geocerca').checked, RECORDATORIOS: $('s-recordatorios').checked,
-          VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked,
+          VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, EMAIL_AVISOS: $('s-emails').value.trim(),
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
           HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
           JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
@@ -1120,10 +1136,15 @@
     b.addEventListener('click', function () {
       S.solTab = b.dataset.t;
       $('sol-tabs').querySelectorAll('button').forEach(function (x) { x.classList.toggle('activo', x === b); });
-      $('sol-vac').classList.toggle('hidden', S.solTab !== 'sol-vac'); $('sol-he').classList.toggle('hidden', S.solTab !== 'sol-he');
-      if (S.solTab === 'sol-he') cargarHorasExtra(); else cargarVacaciones();
+      abrirSolTab(S.solTab);
     });
   });
+  function abrirSolTab(t) {
+    S.solTab = t;
+    $('sol-tabs').querySelectorAll('button').forEach(function (x) { x.classList.toggle('activo', x.dataset.t === t); });
+    ['sol-vac', 'sol-he', 'sol-cor'].forEach(function (id) { $(id).classList.toggle('hidden', id !== t); });
+    if (t === 'sol-he') cargarHorasExtra(); else if (t === 'sol-cor') cargarCorrecciones(); else cargarVacaciones();
+  }
   function hmTxt(min) { min = Math.round(min || 0); return Math.floor(min / 60) + 'h' + (min % 60 ? ' ' + ('0' + (min % 60)).slice(-2) + 'm' : ''); }
   function medidor(usado, limite) {
     var pc = Math.min(100, Math.round(usado / limite * 100));
@@ -1132,19 +1153,17 @@
   $('he-fecha').value = hoyISO();
   function cargarHorasExtra() {
     api({ action: 'misHorasExtra' }).then(function (r) {
-      var x = r.resumen;
-      $('he-anio').textContent = x.anio;
-      $('he-kpis').innerHTML = [['Hechas (fichajes)', hmTxt(x.realizadas)], ['Autorizadas', hmTxt(x.autorizadas)], ['Pendientes', hmTxt(x.pendientes)]]
+      var x = r.resumen, mm = Number(r.mes.slice(5, 7));
+      $('he-mes').textContent = MESES[mm - 1] + ' ' + r.mes.slice(0, 4);
+      $('he-kpis').innerHTML = [['Hechas (según fichajes)', hmTxt(x.realizadas)], ['Autorizadas', hmTxt(x.autorizadas)], ['Pendientes', hmTxt(x.pendientes)]]
         .map(function (k) { return '<div class="kpi"><b style="font-size:19px">' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('');
-      $('he-medidor').innerHTML = 'Cuentan para el límite de 80 h al año: <b>' + hmTxt(x.computanLimite) + '</b>' + medidor(x.computanLimite, x.limite) +
-        (x.descanso ? '<div style="margin-top:4px">' + hmTxt(x.descanso) + ' compensadas con descanso (no cuentan).</div>' : '');
       $('he-lista').innerHTML = r.solicitudes.map(function (h) {
         return '<li><div><div class="t">' + esc(fechaCorta(h.fecha)) + ' · ' + esc(h.desde) + '–' + esc(h.hasta) + ' (' + hmTxt(h.minutos) + ')</div>' +
           '<div class="m">' + esc(h.motivo) + ' · ' + esc(h.compensacionTxt) + '</div>' +
           (h.respuesta ? '<div class="m"><b>Respuesta:</b> ' + esc(h.respuesta) + '</div>' : '') + '</div>' +
           '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><span class="chip est-' + esc(h.estado) + '">' + esc(h.estadoTxt) + '</span>' +
           (h.estado === 'PENDIENTE' ? '<button class="btn sec peq" data-hc="' + esc(h.id) + '">Cancelar</button>' : '') + '</div></li>';
-      }).join('') || '<li class="m">No has pedido horas extra todavía.</li>';
+      }).join('') || '<li class="m">No tienes solicitudes recientes.</li>';
       $('he-lista').querySelectorAll('[data-hc]').forEach(function (b) {
         b.addEventListener('click', function () {
           if (!confirm('¿Cancelar esta solicitud?')) return;
@@ -1165,6 +1184,101 @@
     api(d).then(function (r) { toast(r.mensaje, 6000); $('he-motivo').value = ''; cargarHorasExtra(); })
       .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
   });
+
+  // ----- Corregir fichaje (empleado) -----
+  function itemsCorreccion(lista) {
+    $('co-items').innerHTML = lista.map(function (x) {
+      return '<div class="item-c"><select class="co-tipo">' + opcionesTipo(x.tipo) + '</select><input class="co-hora" type="time" value="' + esc(x.hora || '') + '">' +
+        '<button class="co-quitar" aria-label="Quitar">×</button></div>';
+    }).join('');
+    $('co-items').querySelectorAll('.co-quitar').forEach(function (b, i) {
+      b.addEventListener('click', function () { var l = leerItems(); if (l.length > 1) { l.splice(i, 1); itemsCorreccion(l); } });
+    });
+  }
+  function leerItems() {
+    var t = $('co-items').querySelectorAll('.co-tipo'), h = $('co-items').querySelectorAll('.co-hora'), l = [];
+    for (var i = 0; i < t.length; i++) l.push({ tipo: t[i].value, hora: h[i].value });
+    return l;
+  }
+  itemsCorreccion([{ tipo: 'SALIDA', hora: '' }]);
+  $('co-fecha').value = hoyISO();
+  $('co-mas').addEventListener('click', function () {
+    var l = leerItems(); if (l.length >= 6) return;
+    var sig = { ENTRADA: 'SALIDA', SALIDA: 'ENTRADA', INICIO_PAUSA: 'FIN_PAUSA', FIN_PAUSA: 'SALIDA' }[l[l.length - 1].tipo] || 'SALIDA';
+    l.push({ tipo: sig, hora: '' }); itemsCorreccion(l);
+  });
+  function cargarCorrecciones() {
+    api({ action: 'misCorrecciones' }).then(function (r) {
+      $('co-lista').innerHTML = r.solicitudes.map(function (x) {
+        return '<li><div><div class="t">' + esc(fechaCorta(x.fecha)) + '</div><div class="m">' + x.items.map(function (i) { return esc(ETQ[i.tipo] + ' ' + i.hora); }).join(', ') +
+          '</div>' + (x.respuesta ? '<div class="m"><b>Respuesta:</b> ' + esc(x.respuesta) + '</div>' : '') + '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><span class="chip est-' + esc(x.estado) + '">' + esc(x.estadoTxt) + '</span>' +
+          (x.estado === 'PENDIENTE' ? '<button class="btn sec peq" data-cc="' + esc(x.id) + '">Cancelar</button>' : '') + '</div></li>';
+      }).join('') || '<li class="m">No has pedido correcciones.</li>';
+      $('co-lista').querySelectorAll('[data-cc]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          if (!confirm('¿Cancelar esta corrección?')) return;
+          cargando(true);
+          api({ action: 'cancelarCorreccion', id: b.dataset.cc }).then(function (r) { toast(r.mensaje); cargarCorrecciones(); })
+            .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+        });
+      });
+    }).catch(function (e) { toast(e.message); });
+  }
+  $('co-enviar').addEventListener('click', function () {
+    var items = leerItems().filter(function (x) { return x.hora; });
+    if (!$('co-fecha').value) return toast('Elige el día.');
+    if (!items.length) return toast('Pon la hora de lo que falta.');
+    if ($('co-motivo').value.trim().length < 5) return toast('Explica brevemente qué pasó.');
+    cargando(true, 'Enviando…');
+    api({ action: 'solicitarCorreccion', fecha: $('co-fecha').value, items: items, motivo: $('co-motivo').value.trim() }).then(function (r) {
+      toast(r.mensaje, 6000); $('co-motivo').value = ''; itemsCorreccion([{ tipo: 'SALIDA', hora: '' }]); cargarCorrecciones();
+    }).catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+  });
+
+  // ----- Correcciones pedidas (admin) -----
+  function cargarCorreccionesAdmin() {
+    return api({ action: 'adminCorreccionesPend', empresa: S.filtro }).then(function (r) {
+      var n = r.pendientes.length, bd = $('adm-badge-co');
+      bd.textContent = n; bd.classList.toggle('hidden', !n);
+      $('co-pend-card').classList.toggle('hidden', !n);
+      $('co-pend').innerHTML = r.pendientes.map(function (x) {
+        return '<div class="fila-admin"><div class="cab"><b>' + esc(x.nombre) + '</b><span class="m">' + esc(fechaCorta(x.fecha)) + '</span></div>' +
+          '<div class="det">Añadir: <b>' + x.items.map(function (i) { return esc(ETQ[i.tipo] + ' ' + i.hora); }).join(', ') + '</b><br>«' + esc(x.motivo) + '»</div>' +
+          '<div class="acciones" style="margin-top:10px"><button class="btn sec peq" data-cv="' + esc(x.id) + '">Ver el día</button>' +
+          '<button class="btn peligro peq" data-cr="' + esc(x.id) + '">Rechazar</button><button class="btn peq" data-ca="' + esc(x.id) + '">Aceptar</button></div></div>';
+      }).join('');
+      var buscar = function (id) { return r.pendientes.filter(function (x) { return x.id === id; })[0]; };
+      $('co-pend').querySelectorAll('[data-ca]').forEach(function (b) { b.addEventListener('click', function () { resolverCorreccion(buscar(b.dataset.ca), true); }); });
+      $('co-pend').querySelectorAll('[data-cr]').forEach(function (b) { b.addEventListener('click', function () { resolverCorreccion(buscar(b.dataset.cr), false); }); });
+      $('co-pend').querySelectorAll('[data-cv]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var x = buscar(b.dataset.cv);
+          cargarEmpleados().then(function () {
+            $('c-empleado').value = x.email; $('c-desde').value = x.fecha; $('c-hasta').value = x.fecha; verFichajes();
+            setTimeout(function () { $('c-resumen').scrollIntoView({ behavior: 'smooth' }); }, 400);
+          });
+        });
+      });
+    }).catch(function () {});
+  }
+  function resolverCorreccion(x, aprobar) {
+    var txt = x.items.map(function (i) { return ETQ[i.tipo] + ' ' + i.hora; }).join(', ');
+    abrirModal('<h2>' + (aprobar ? 'Aceptar' : 'Rechazar') + ' corrección</h2><p class="ayuda"><b>' + esc(x.nombre) + '</b> · ' + esc(fechaCorta(x.fecha)) + '<br>' + esc(txt) +
+      (aprobar ? '<br>Se añadirá como fichaje manual con el motivo del empleado y tu nombre.' : '') + '</p>' +
+      '<label for="rc-txt">' + (aprobar ? 'Mensaje (opcional)' : 'Explica por qué no (obligatorio)') + '</label><textarea id="rc-txt"></textarea>' +
+      '<div class="acciones"><button class="btn sec" id="rc-no">Volver</button><button class="btn' + (aprobar ? '' : ' peligro') + '" id="rc-ok">' + (aprobar ? 'Aceptar' : 'Rechazar') + '</button></div>');
+    $('rc-no').addEventListener('click', cerrarModal);
+    $('rc-ok').addEventListener('click', function () {
+      var t = $('rc-txt').value.trim();
+      if (!aprobar && t.length < 5) return toast('Escribe el motivo.');
+      cargando(true);
+      api({ action: 'adminResolverCorreccion', id: x.id, aprobar: aprobar, respuesta: t }).then(function (r) {
+        cerrarModal(); toast(r.mensaje, 6000); cargarCorreccionesAdmin();
+        if (S.fichajesDias && $('c-empleado').value === x.email) verFichajes();
+      }).catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+    });
+  }
 
   // ----- Horas extra (admin) -----
   function cargarHorasExtraAdmin() {
@@ -1220,6 +1334,7 @@
     var pintar = function (k) { var b = $('adm-badge'); b.textContent = k; b.classList.toggle('hidden', !k); };
     if (n !== undefined) return pintar(n);
     api({ action: 'adminSolicitudes', empresa: S.filtro }).then(function (r) { pintar(r.pendientes.length); }).catch(function () {});
+    cargarCorreccionesAdmin();
     api({ action: 'adminHorasExtra', empresa: S.filtro }).then(function (r) { var b = $('adm-badge-he'); b.textContent = r.pendientes.length; b.classList.toggle('hidden', !r.pendientes.length); }).catch(function () {});
   }
   function cargarSolicitudes() {

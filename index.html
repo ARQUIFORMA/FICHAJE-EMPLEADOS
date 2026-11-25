@@ -165,8 +165,10 @@
     .barra { position: fixed; top: 0; left: 0; height: 3px; width: 100%; z-index: 50; background: linear-gradient(90deg, transparent, var(--oficina), transparent);
       background-size: 50% 100%; background-repeat: no-repeat; animation: barra 1s linear infinite; }
     @keyframes barra { from { background-position: -50% 0; } to { background-position: 150% 0; } }
-    .pestanas { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #e6ebf0; padding: 4px; border-radius: 12px; margin-bottom: 14px; }
-    .pestanas button { padding: 10px; border-radius: 9px; background: transparent; font-weight: 600; font-size: 15px; color: var(--muted); }
+    .pestanas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; background: #e6ebf0; padding: 4px; border-radius: 12px; margin-bottom: 14px; }
+    .pestanas button { padding: 10px 4px; border-radius: 9px; background: transparent; font-weight: 600; font-size: 14px; color: var(--muted); line-height: 1.2; }
+    .item-c { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr) 44px; gap: 8px; margin-top: 8px; align-items: center; }
+    .item-c button { height: 44px; border-radius: 10px; background: var(--bad-bg); color: var(--bad); font-size: 18px; }
     .pestanas button.activo { background: #fff; color: var(--brand); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
     .medidor { height: 8px; border-radius: 99px; background: #e6ebf0; overflow: hidden; margin-top: 4px; }
     .medidor i { display: block; height: 100%; background: var(--ok); }
@@ -253,12 +255,29 @@
 
     <!-- VACACIONES (empleado) -->
     <section id="v-vacaciones" class="hidden">
-      <div class="pestanas" id="sol-tabs"><button data-t="sol-vac" class="activo">Vacaciones</button><button data-t="sol-he">Horas extra</button></div>
+      <div class="pestanas" id="sol-tabs"><button data-t="sol-vac" class="activo">Vacaciones</button><button data-t="sol-he">Horas extra</button><button data-t="sol-cor">Corregir fichaje</button></div>
+      <div id="sol-cor" class="hidden">
+        <div class="card">
+          <h2>Corregir un fichaje</h2>
+          <p class="ayuda">¿Se te olvidó fichar o cerrar la jornada? Indica qué falta. Administración lo revisa y, si lo acepta, se añade a tu registro. Te llegará un email.</p>
+          <label for="co-fecha">Día</label><input id="co-fecha" type="date">
+          <label>Qué falta</label>
+          <div id="co-items"></div>
+          <button class="btn sec peq" id="co-mas" style="margin-top:8px">+ Otro fichaje</button>
+          <label for="co-motivo">Qué pasó</label>
+          <input id="co-motivo" maxlength="300" placeholder="Ej.: salí a las 17:30 y se me olvidó fichar">
+          <div style="height:14px"></div>
+          <button class="btn" id="co-enviar">Enviar corrección</button>
+        </div>
+        <div class="card">
+          <h2>Mis correcciones</h2>
+          <ul class="lista" id="co-lista"></ul>
+        </div>
+      </div>
       <div id="sol-he" class="hidden">
         <div class="card">
-          <h2>Horas extra <span class="m" id="he-anio"></span></h2>
+          <h2>Horas extra · <span id="he-mes" style="text-transform:capitalize"></span></h2>
           <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin:10px 0 0" id="he-kpis"></div>
-          <div id="he-medidor" class="det" style="margin-top:10px"></div>
         </div>
         <div class="card">
           <h2>Pedir horas extra</h2>
@@ -327,7 +346,7 @@
           <button data-p="p-hoy" class="activo">Hoy</button>
           <button data-p="p-calendario">Calendario</button>
           <button data-p="p-personal">Personal</button>
-          <button data-p="p-corregir">Fichajes</button>
+          <button data-p="p-corregir">Fichajes<span id="adm-badge-co" class="badge hidden"></span></button>
           <button data-p="p-vacaciones">Vacaciones<span id="adm-badge" class="badge hidden"></span></button>
           <button data-p="p-extra">Horas extra<span id="adm-badge-he" class="badge hidden"></span></button>
           <button data-p="p-informes">Informes</button>
@@ -383,6 +402,10 @@
 
         <!-- FICHAJES: ver y corregir -->
         <div id="p-corregir" class="panel hidden">
+          <div class="card hidden" id="co-pend-card">
+            <h2>Correcciones pedidas por los empleados</h2>
+            <div id="co-pend"></div>
+          </div>
           <div class="card">
             <h2>Fichajes de un empleado</h2>
             <p class="ayuda">Revisa y corrige cualquier día. Los cambios se ven al momento en los dos Excel. Nada se borra: lo anulado queda guardado con tu nombre y el motivo, como exige la normativa.</p>
@@ -546,6 +569,14 @@
             <p class="m" style="margin-top:6px">El horario de verano se repite cada año en las mismas fechas.</p>
           </div>
           <div class="card">
+            <h2>Avisos por email</h2>
+            <p class="ayuda">Aquí llegan las solicitudes de vacaciones, horas extra y correcciones de fichaje, y el resumen de quién olvidó fichar.</p>
+            <label for="s-emails">Enviar los avisos a (separa varios con comas)</label>
+            <input id="s-emails" type="text" inputmode="email" placeholder="javier@arquiforma.com">
+            <div id="s-email-info" class="det"></div>
+            <button class="btn sec" id="s-probar" style="margin-top:12px">Enviar email de prueba</button>
+          </div>
+          <div class="card">
             <h2>Vacaciones y nóminas</h2>
             <label for="s-vac">Días laborables de vacaciones al año (por defecto)</label>
             <input id="s-vac" type="number" inputmode="numeric" min="0" max="60">
@@ -643,7 +674,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=14"></script>
-  <script src="app.js?v=14"></script>
+  <script src="geo.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
