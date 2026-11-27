@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v10: apartados activables, incidencias, panel que recuerda la sesión, más rápida) */
+/* app.js — PWA de fichaje (v11: perfil «Ordenador» con equipo autorizado, borrado de registros antiguos) */
 (function () {
   'use strict';
 
@@ -80,12 +80,30 @@
     sel.innerHTML = html;
   }
 
+  // Identificador propio de este navegador/ordenador (para el perfil «Ordenador»). No contiene datos personales.
+  var EQUIPO = (function () {
+    try {
+      var e = localStorage.getItem('fichaje_equipo');
+      if (!e) {
+        var a = new Uint8Array(24); crypto.getRandomValues(a);
+        e = Array.prototype.map.call(a, function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+        localStorage.setItem('fichaje_equipo', e);
+      }
+      return e;
+    } catch (err) { return ''; }
+  })();
+  function descripcionEquipo() {
+    var ua = navigator.userAgent, so = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) && !/Mobile/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Linux/.test(ua) ? 'Linux' : 'Equipo';
+    var nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
+    return so + ' · ' + nav;
+  }
   var enVuelo = 0;
   function barra(d) { enVuelo = Math.max(0, enVuelo + d); $('barra').classList.toggle('hidden', !enVuelo); }
   function api(payload) {
     if (!navigator.onLine) return Promise.reject(new Error('Sin conexión a Internet.'));
     barra(1);
     if (S.token && !payload.token) payload.token = S.token;
+    if (EQUIPO && (payload.action === 'estado' || payload.action === 'fichar' || payload.action === 'solicitarEquipo')) payload.equipo = EQUIPO;
     if (payload.action.indexOf('admin') === 0 && payload.action !== 'adminUnlock') payload.adminToken = S.adminToken;
     return fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), redirect: 'follow' })
       .then(function (r) { if (!r.ok) throw new Error('Servidor no disponible (' + r.status + ').'); return r.json(); })
@@ -239,6 +257,7 @@
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
       $('nav-coches').classList.toggle('hidden', !r.cochesUnico);
       S.nominasActivas = !!r.nominasActivas;
+      S.equipo = r.equipo || null;
       aplicarModulos(r.modulos);
       $('yo-nominas').classList.toggle('hidden', !S.nominasActivas);
       $('aj-nombre').textContent = r.usuario.nombre; $('aj-email').textContent = r.usuario.email;
@@ -310,6 +329,20 @@
     aviso.innerHTML = ''; if (sub) sub.textContent = '';
     if (S.estado === 'PAUSA') { habilitado = false; if (sub) sub.textContent = 'Termina la pausa antes'; }
     if (S.provisional) { b.disabled = true; if (sub) sub.textContent = 'Conectando…'; return; }
+    if (S.usuario && S.usuario.perfil === 'Ordenador' && S.equipo && !S.equipo.autorizado) {
+      habilitado = false;
+      aviso.innerHTML = S.equipo.pendiente
+        ? '<div class="aviso warn">Este ordenador está <b>pendiente de autorización</b>. Podrás fichar en cuanto administración lo apruebe.</div>'
+        : '<div class="aviso warn">Solo puedes fichar desde tu <b>ordenador de trabajo autorizado</b>. Si estás en él, pide la autorización:' +
+          '<div style="margin-top:8px"><button class="btn sec peq" id="b-equipo">Autorizar este ordenador</button></div></div>';
+      var be = $('b-equipo');
+      if (be) be.addEventListener('click', function () {
+        cargando(true);
+        api({ action: 'solicitarEquipo', descripcion: descripcionEquipo() }).then(function (k) {
+          toast(k.mensaje, 6000); S.equipo.pendiente = true; actualizarBoton();
+        }).catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+      });
+    }
     if (exigeOficina() && habilitado) {
       if (!S.sede) { habilitado = false; aviso.innerHTML = '<div class="aviso bad">No tienes oficina asignada. Contacta con administración.</div>'; }
       else if (!S.geo) { habilitado = false; if (sub) sub.textContent = 'Buscando tu ubicación…'; }
@@ -328,6 +361,7 @@
     if (perfil === 'Oficina' && exigeOficina()) { refrescarPosicion(); S.timerGps = setInterval(refrescarPosicion, CFG.INTERVALO_GPS_MS || 15000); }
     else if (perfil === 'Oficina') $('gps-info').textContent = 'Puedes fichar desde cualquier sitio.';
     else if (perfil === 'Obra') $('gps-info').textContent = 'Al fichar se registrará la hora y tu ubicación en ese momento.';
+    else if (perfil === 'Ordenador') $('gps-info').textContent = 'Fichas desde tu ordenador de trabajo: se registra solo la hora, sin ubicación.';
     else $('gps-info').textContent = 'Teletrabajo: se registra solo la hora, sin ubicación.';
     actualizarBoton();
   }
@@ -510,6 +544,7 @@
     $('u-lista').innerHTML = lista.map(function (u, i) {
       return '<li class="click" data-email="' + esc(u.email) + '"><div><div class="t">' + esc(u.nombre) + (u.esAdmin ? ' <span class="chip">admin</span>' : '') +
         (u.tienePin ? '' : ' <span class="chip">sin PIN</span>') + (u.sinGeocerca && u.perfil === 'Oficina' ? ' <span class="chip">ficha fuera</span>' : '') +
+        (u.equipo && u.equipo.pendiente ? ' <span class="chip est-PENDIENTE">ordenador por autorizar</span>' : '') +
         '</div><div class="m">' + (multiempresa() && !S.filtro ? esc(nombreEmpresa(u.idEmpresa)) + ' · ' : '') + esc(u.puesto ? u.puesto + ' · ' : '') + esc(u.email) + '</div></div>' +
         '<span class="perfil ' + (u.activo ? esc(u.perfil) : 'baja') + '">' + (u.activo ? esc(u.perfil) : 'Baja') + '</span></li>';
     }).join('') || '<li class="m">Sin resultados.</li>';
@@ -573,20 +608,40 @@
       '<label for="m-puesto">Puesto / profesión (aparece en los Excel)</label><input id="m-puesto" value="' + esc(u.puesto || '') + '" placeholder="Ej.: Arquitecto técnico">' +
       '<label for="m-nif">NIF (opcional, aparece en los Excel)</label><input id="m-nif" value="' + esc(u.nif || '') + '">' +
       '<div class="fila2"><div><label for="m-perfil">Perfil</label><select id="m-perfil">' +
-      ['Oficina', 'Obra', 'Teletrabajo'].map(function (p) { return '<option' + (u.perfil === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
+      [['Oficina', 'Oficina'], ['Obra', 'Obra'], ['Teletrabajo', 'Teletrabajo'], ['Ordenador', 'Ordenador de trabajo']].map(function (p) {
+        return '<option value="' + p[0] + '"' + (u.perfil === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
       '</select></div><div><label for="m-sede">Sede</label><select id="m-sede">' + sedesOpts + '</select></div></div>' +
       '<div class="fila2"><div><label for="m-jornada">Horas por semana (contrato)</label><input id="m-jornada" type="number" inputmode="decimal" min="1" max="40" step="0.5" value="' + esc(u.jornadaSemanal || 40) + '"></div>' +
       '<div><label for="m-vac">Días de vacaciones/año</label><input id="m-vac" type="number" inputmode="numeric" min="0" max="60" value="' + esc(u.diasVacaciones == null ? '' : u.diasVacaciones) + '" placeholder="' + esc((S.ajustes && S.ajustes.config.VACACIONES_DIAS) || 22) + ' (general)"></div></div>' +
       '<div class="m" style="margin-top:4px">Con menos de 40 h, las horas previstas (y por tanto las extra) se calculan en proporción.</div>' +
       '<div class="interruptor" style="margin-top:16px" id="m-fuera-fila"><div><h3>Puede fichar fuera de la oficina</h3><div class="m">Solo afecta al perfil Oficina.</div></div>' +
       '<input type="checkbox" id="m-fuera"' + (u.sinGeocerca ? ' checked' : '') + '></div>' +
+      (nuevo ? '' : '<div id="m-equipo-fila" class="aviso info" style="margin-top:16px"></div>') +
       '<div class="interruptor" style="margin-top:16px"><div><h3>Activo</h3><div class="m">Desactivar = baja. Su histórico se conserva.</div></div>' +
       '<input type="checkbox" id="m-activo"' + (u.activo ? ' checked' : '') + (u.esAdmin ? ' disabled' : '') + '></div>' +
       '<div class="acciones"><button class="btn sec" id="m-cancelar">Cancelar</button><button class="btn" id="m-guardar">' + (nuevo ? 'Crear y generar PIN' : 'Guardar') + '</button></div>' +
       (nuevo ? '' : '<button class="btn sec" id="m-pin" style="margin-top:10px">Generar PIN nuevo</button>' +
                     '<button class="btn sec" id="m-informe" style="margin-top:10px">Excel de este mes (Inspección)</button>')
     );
-    var verFuera = function () { $('m-fuera-fila').classList.toggle('hidden', $('m-perfil').value !== 'Oficina'); };
+    var pintarEquipo = function () {
+      var f = $('m-equipo-fila'); if (!f) return;
+      var eq = u.equipo || {};
+      f.classList.toggle('hidden', $('m-perfil').value !== 'Ordenador');
+      f.innerHTML = '<b>Ordenador de fichaje:</b> ' + (eq.autorizado ? 'autorizado' : 'ninguno') + (eq.desc ? ' (' + esc(eq.desc) + ')' : '') +
+        (eq.pendiente ? '<br><b>Ha pedido autorizar un ordenador.</b> Hazlo solo si te consta que es su equipo de trabajo.' +
+          '<div class="mini"><button data-eq="autorizar">Autorizar</button><button data-eq="rechazar">Rechazar</button></div>'
+          : (eq.autorizado ? '<div class="mini"><button data-eq="quitar">Quitar ordenador</button></div>' :
+             '<br>Para autorizarlo: que entre en la app desde su ordenador de trabajo y pulse «Autorizar este ordenador».'));
+      f.querySelectorAll('[data-eq]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          cargando(true);
+          api({ action: 'adminEquipo', email: u.email, accion: b.dataset.eq }).then(function (k) {
+            toast(k.mensaje); cerrarModal(); cargarEmpleados(true); actualizarBadge();
+          }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+        });
+      });
+    };
+    var verFuera = function () { $('m-fuera-fila').classList.toggle('hidden', $('m-perfil').value !== 'Oficina'); pintarEquipo(); };
     $('m-perfil').addEventListener('change', verFuera); verFuera();
     $('m-cancelar').addEventListener('click', cerrarModal);
     $('m-guardar').addEventListener('click', function () {
@@ -906,6 +961,21 @@
       pintarSedes(r.sedes);
     }).catch(function (e) { toast(e.message); });
   }
+  $('s-purgar').addEventListener('click', function () {
+    cargando(true, 'Revisando…');
+    api({ action: 'adminPurgarAntiguos' }).then(function (r) {
+      if (!r.borrables) return toast(r.mensaje);
+      abrirModal('<h2>Borrar registros antiguos</h2><p class="ayuda">Hay <b>' + r.borrables + ' fichajes anteriores al ' + esc(fechaCorta(r.limite)) +
+        '</b> (más de 4 años). Se borrarán también sus jornadas y correcciones.</p><div class="aviso warn">No se puede deshacer. Si quieres conservar una copia, archiva antes esos meses en Drive (Informes).</div>' +
+        '<div class="acciones"><button class="btn sec" id="pg-no">Cancelar</button><button class="btn peligro" id="pg-ok">Borrar ' + r.borrables + '</button></div>');
+      $('pg-no').addEventListener('click', cerrarModal);
+      $('pg-ok').addEventListener('click', function () {
+        cargando(true, 'Borrando…');
+        api({ action: 'adminPurgarAntiguos', confirmar: true }).then(function (k) { cerrarModal(); toast(k.mensaje, 6000); })
+          .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+      });
+    }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  });
   $('s-probar').addEventListener('click', function () {
     cargando(true, 'Enviando email de prueba…');
     api({ action: 'adminProbarEmail' }).then(function (r) { toast(r.mensaje, 8000); })
@@ -1482,7 +1552,7 @@
     if (n !== undefined) return pintarBadge('adm-badge', n);
     apiCache({ action: 'adminBadges', empresa: S.filtro }, function (r) {
       pintarBadge('adm-badge', r.vacaciones); pintarBadge('adm-badge-he', r.horasExtra);
-      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias);
+      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias); pintarBadge('adm-badge-pe', r.equipos || 0);
       aplicarModulosAdmin(r.modulos);
     }).catch(function () {});
   }

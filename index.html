@@ -57,7 +57,7 @@
     .acciones > * { flex: 1; }
 
     .perfil { display: inline-flex; align-items: center; padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; }
-    .perfil.Oficina { background: var(--oficina); } .perfil.Obra { background: var(--obra); } .perfil.Teletrabajo { background: var(--teletrabajo); }
+    .perfil.Oficina { background: var(--oficina); } .perfil.Obra { background: var(--obra); } .perfil.Teletrabajo { background: var(--teletrabajo); } .perfil.Ordenador { background: #5b4bb7; }
     .perfil.baja { background: #9aa6b0; }
 
     .reloj { text-align: center; font-size: 44px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
@@ -370,7 +370,7 @@
         <div class="segmentos" id="adm-seg">
           <button data-p="p-hoy" class="activo">Hoy</button>
           <button data-p="p-calendario">Calendario</button>
-          <button data-p="p-personal">Personal</button>
+          <button data-p="p-personal">Personal<span id="adm-badge-pe" class="badge hidden"></span></button>
           <button data-p="p-corregir">Fichajes<span id="adm-badge-co" class="badge hidden"></span></button>
           <button data-p="p-vacaciones">Vacaciones<span id="adm-badge" class="badge hidden"></span></button>
           <button data-p="p-extra">Horas extra<span id="adm-badge-he" class="badge hidden"></span></button>
@@ -631,6 +631,11 @@
             <p class="m" style="margin-top:6px">Mientras lo uses no caduca, aunque recargues la página. «Cerrar panel» lo bloquea al momento.</p>
           </div>
           <div class="card">
+            <h2>Conservación de los registros</h2>
+            <p class="ayuda">La ley obliga a guardar el registro de jornada 4 años. Pasado ese plazo conviene borrarlo (protección de datos). Primero se muestra cuántos hay; no se borra nada sin tu confirmación.</p>
+            <button class="btn sec" id="s-purgar">Revisar registros de más de 4 años</button>
+          </div>
+          <div class="card">
             <h2>Avisos por email</h2>
             <p class="ayuda">Aquí llegan las solicitudes de vacaciones, horas extra y correcciones de fichaje, y el resumen de quién olvidó fichar.</p>
             <label for="s-emails">Enviar los avisos a (separa varios con comas)</label>
@@ -736,7 +741,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=17"></script>
-  <script src="app.js?v=17"></script>
+  <script src="geo.js?v=18"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
