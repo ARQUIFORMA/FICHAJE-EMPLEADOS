@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v14: control de versiones y modo mantenimiento) */
+/* app.js — PWA de fichaje (v15: almuerzo opcional) */
 /* La versión debe coincidir con VERSION_APP de Code.gs y con version.json */
 (function () {
   'use strict';
@@ -116,7 +116,17 @@
     var nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
     return so + ' · ' + nav;
   }
-  var APP_V = 14;
+  var APP_V = 15;
+  /** Botón de pausa: almuerzo antes de las 13:00 (si está activado en Ajustes) o comida desde las 13:00. */
+  function pintarPausa() {
+    var bp = $('b-pausa'); if (!bp) return;
+    var esAlmuerzo = new Date(Date.now() + (S.offset || 0)).getHours() < HORA_COMIDA, ultimo = S.ultimoPausa;
+    if (S.estado === 'DENTRO' && esAlmuerzo && S.almuerzo === false) bp.classList.add('hidden');
+    else if (S.estado === 'DENTRO') { bp.textContent = esAlmuerzo ? 'Iniciar almuerzo' : 'Iniciar comida'; bp.dataset.tipo = 'INICIO_PAUSA'; bp.classList.remove('hidden'); }
+    else if (S.estado === 'PAUSA') { bp.textContent = 'Terminar ' + (ultimo && new Date(ultimo.fechaHora).getHours() < HORA_COMIDA ? 'almuerzo' : 'comida') + ' y volver al trabajo'; bp.dataset.tipo = 'FIN_PAUSA'; bp.classList.remove('hidden'); }
+    else bp.classList.add('hidden');
+  }
+  setInterval(pintarPausa, 60000); // a las 13:00 aparece «Iniciar comida» sin recargar
   var enVuelo = 0;
   function barra(d) { enVuelo = Math.max(0, enVuelo + d); $('barra').classList.toggle('hidden', !enVuelo); }
   function api(payload) {
@@ -280,6 +290,7 @@
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
       $('nav-coches').classList.toggle('hidden', !r.cochesUnico);
       S.nominasActivas = !!r.nominasActivas;
+      S.almuerzo = r.almuerzo !== false;
       quitarBloqueo(); avisosAdminVersion(r);
       S.equipo = r.equipo || null;
       aplicarModulos(r.modulos);
@@ -335,11 +346,8 @@
     b.className = 'fichar ' + (esEntrada ? 'entrada' : 'salida');
     b.innerHTML = 'Fichar<br>' + (esEntrada ? 'Entrada' : 'Salida') + '<small id="b-principal-sub"></small>';
     b.dataset.tipo = esEntrada ? 'ENTRADA' : 'SALIDA';
-    var bp = $('b-pausa');
-    var esAlmuerzo = new Date(Date.now() + S.offset).getHours() < 13;
-    if (estado === 'DENTRO') { bp.textContent = esAlmuerzo ? 'Iniciar almuerzo' : 'Iniciar comida'; bp.dataset.tipo = 'INICIO_PAUSA'; bp.classList.remove('hidden'); }
-    else if (estado === 'PAUSA') { bp.textContent = 'Terminar ' + (ultimo && new Date(ultimo.fechaHora).getHours() < 13 ? 'almuerzo' : 'comida') + ' y volver al trabajo'; bp.dataset.tipo = 'FIN_PAUSA'; bp.classList.remove('hidden'); }
-    else bp.classList.add('hidden');
+    S.ultimoPausa = ultimo;
+    pintarPausa();
     actualizarBoton();
     $('c-ultimo').innerHTML = ultimo
       ? '<div class="m">Último fichaje</div><div style="font-size:16px;margin-top:4px"><b>' + esc(etq(ultimo)) + '</b> · ' +
@@ -793,8 +801,8 @@
     $('c-dias').querySelectorAll('[data-add]').forEach(function (b) { b.addEventListener('click', function () { modalFichaje(b.dataset.add, null); }); });
     $('c-dias').querySelectorAll('[data-jornada]').forEach(function (b) { b.addEventListener('click', function () { modalJornada(b.dataset.jornada); }); });
   }
-  function opcionesTipo(sel) {
-    return TIPOS_ELEGIBLES.map(function (k) { return '<option value="' + k + '"' + (k === sel ? ' selected' : '') + '>' + ETQ[k] + '</option>'; }).join('');
+  function opcionesTipo(sel, sinAlmuerzo) {
+    return TIPOS_ELEGIBLES.filter(function (k) { return !sinAlmuerzo || k.indexOf('ALMUERZO') < 0; }).map(function (k) { return '<option value="' + k + '"' + (k === sel ? ' selected' : '') + '>' + ETQ[k] + '</option>'; }).join('');
   }
   /** Editar (f) o añadir (f = null) un fichaje de un día. */
   function modalFichaje(fecha, f) {
@@ -997,6 +1005,7 @@
       $('s-mod-vac').checked = r.config.VACACIONES_ACTIVAS !== false; $('s-mod-he').checked = r.config.HORAS_EXTRA_ACTIVAS !== false;
       $('s-mod-cor').checked = r.config.CORRECCIONES_ACTIVAS !== false; $('s-mod-inc').checked = r.config.INCIDENCIAS_ACTIVAS !== false;
       $('s-admin-min').value = String(r.config.ADMIN_MINUTOS || 360);
+      $('s-almuerzo').checked = r.config.ALMUERZO_ACTIVO !== false;
       $('s-vinc').checked = !!r.config.VINCULAR_DISPOSITIVO; $('s-vinc-auto').checked = r.config.VINCULAR_AUTO_PRIMERO !== false;
       $('s-email-info').innerHTML = (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
       $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
@@ -1112,7 +1121,7 @@
           VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, AVISOS_DESTINOS: S.destinos || undefined,
           VACACIONES_ACTIVAS: $('s-mod-vac').checked, HORAS_EXTRA_ACTIVAS: $('s-mod-he').checked, CORRECCIONES_ACTIVAS: $('s-mod-cor').checked,
           INCIDENCIAS_ACTIVAS: $('s-mod-inc').checked, ADMIN_MINUTOS: num($('s-admin-min').value),
-          VINCULAR_DISPOSITIVO: $('s-vinc').checked, VERSION_MODO: $('s-ver-modo').value, VINCULAR_AUTO_PRIMERO: $('s-vinc-auto').checked,
+          VINCULAR_DISPOSITIVO: $('s-vinc').checked, VERSION_MODO: $('s-ver-modo').value, ALMUERZO_ACTIVO: $('s-almuerzo').checked, VINCULAR_AUTO_PRIMERO: $('s-vinc-auto').checked,
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
           HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
           JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
@@ -1485,7 +1494,7 @@
   // ----- Corregir fichaje (empleado) -----
   function itemsCorreccion(lista) {
     $('co-items').innerHTML = lista.map(function (x) {
-      return '<div class="item-c"><select class="co-tipo">' + opcionesTipo(x.tipo) + '</select><input class="co-hora" type="time" value="' + esc(x.hora || '') + '">' +
+      return '<div class="item-c"><select class="co-tipo">' + opcionesTipo(x.tipo, S.almuerzo === false) + '</select><input class="co-hora" type="time" value="' + esc(x.hora || '') + '">' +
         '<button class="co-quitar" aria-label="Quitar">×</button></div>';
     }).join('');
     $('co-items').querySelectorAll('.co-quitar').forEach(function (b, i) {
