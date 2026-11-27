@@ -141,6 +141,13 @@
     .checks label:last-child { border-bottom: 0; }
     .checks input { width: 22px; height: 22px; accent-color: var(--brand); }
 
+    .dest { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
+    .dest.pausado { opacity: .6; background: #fafbfc; }
+    .dest .cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .dest .tipos { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: 13px; }
+    .dest .tipos label { display: flex; align-items: center; gap: 5px; margin: 0; font-weight: 500; color: var(--ink); }
+    .dest .tipos input { width: 18px; height: 18px; }
+    .bloqueo { position: fixed; inset: 0; z-index: 60; background: var(--bg, #f3f5f8); display: flex; align-items: center; padding: 20px; overflow: auto; }
     .badge { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 12px; margin-left: 4px; }
     .saldo { text-align: center; padding: 6px 0 2px; }
     .saldo b { display: block; font-size: 54px; line-height: 1; color: var(--ok); font-variant-numeric: tabular-nums; }
@@ -357,7 +364,7 @@
         <h2>Panel de administrador</h2>
         <p class="ayuda">Vuelve a introducir tu PIN. El panel se cierra solo tras 30 minutos sin uso.</p>
         <form id="f-admin">
-          <input id="adm-pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" placeholder="PIN" style="text-align:center;font-size:22px;letter-spacing:6px" required>
+          <input id="adm-pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="one-time-code" placeholder="PIN" style="text-align:center;font-size:22px;letter-spacing:6px" required>
           <div style="height:14px"></div>
           <button class="btn" type="submit">Abrir panel</button>
         </form>
@@ -368,7 +375,7 @@
           <select id="adm-empresa" aria-label="Empresa" style="font-weight:600"></select>
         </div>
         <div class="segmentos" id="adm-seg">
-          <button data-p="p-hoy" class="activo">Hoy</button>
+          <button data-p="p-hoy" class="activo">Hoy<span id="adm-badge-al" class="badge hidden"></span></button>
           <button data-p="p-calendario">Calendario</button>
           <button data-p="p-personal">Personal<span id="adm-badge-pe" class="badge hidden"></span></button>
           <button data-p="p-corregir">Fichajes<span id="adm-badge-co" class="badge hidden"></span></button>
@@ -383,6 +390,11 @@
 
         <!-- HOY -->
         <div id="p-hoy" class="panel">
+          <div class="card hidden" id="al-card">
+            <div class="cab" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h2 style="margin:0">Alertas de fichaje</h2>
+              <button class="btn sec peq" id="al-todas">Marcar todas revisadas</button></div>
+            <ul class="lista" id="al-lista"></ul>
+          </div>
           <div class="card">
             <div class="fila2">
               <div><input id="a-fecha" type="date" aria-label="Día"></div>
@@ -419,7 +431,7 @@
               <div><h2>Empleados</h2><div class="m" id="u-cuenta"></div></div>
               <button class="btn peq" id="u-nuevo">+ Nuevo</button>
             </div>
-            <input id="u-buscar" type="search" placeholder="Buscar por nombre o email" style="margin-top:12px">
+            <input id="u-buscar" type="search" name="buscar-empleado" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" readonly data-lpignore="true" placeholder="Buscar por nombre o email" style="margin-top:12px">
             <ul class="lista" id="u-lista" style="margin-top:6px"></ul>
             <button class="btn peligro" id="u-pin-todos" style="margin-top:14px">Nuevo PIN para todos</button>
             <p class="m" style="margin-top:6px">Genera un PIN de 6 cifras para cada empleado activo (de la empresa elegida arriba, o de todas). Tu PIN no cambia. Los PIN anteriores dejan de funcionar; si el PIN único de Coches está activado, también los antiguos de 4 cifras de Coches.</p>
@@ -631,15 +643,44 @@
             <p class="m" style="margin-top:6px">Mientras lo uses no caduca, aunque recargues la página. «Cerrar panel» lo bloquea al momento.</p>
           </div>
           <div class="card">
+            <h2>Versión y mantenimiento</h2>
+            <div id="ver-info" class="det"></div>
+            <label for="s-ver-modo">Si alguien tiene una versión antigua de la app</label>
+            <select id="s-ver-modo">
+              <option value="obligar">Obligar a actualizar (no puede fichar ni enviar nada hasta actualizar)</option>
+              <option value="avisar">Solo avisar</option>
+            </select>
+            <button class="btn sec" id="s-forzar" style="margin-top:10px">Forzar a todos a la versión actual ya</button>
+            <div style="height:16px"></div>
+            <h3>Modo mantenimiento</h3>
+            <p class="ayuda">Mientras pruebas cambios, solo tú, los demás administradores y quien marques aquí podréis usar la app. El resto verá el mensaje de abajo. Se activa y desactiva al momento (no hace falta «Guardar ajustes»).</p>
+            <div id="mt-estado"></div>
+            <label for="mt-msg">Mensaje para los demás</label>
+            <textarea id="mt-msg" maxlength="300"></textarea>
+            <label>También pueden usarla</label>
+            <input id="mt-buscar" type="search" autocomplete="off" placeholder="Filtrar por nombre" style="margin-bottom:6px">
+            <div id="mt-lista" style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:6px 10px"></div>
+            <div class="acciones" style="margin-top:12px"><button class="btn" id="mt-guardar">Activar mantenimiento</button></div>
+          </div>
+          <div class="card">
+            <h2>Seguridad del fichaje</h2>
+            <div class="interruptor"><div><h3>Vincular cada cuenta a su dispositivo</h3><div class="m">Solo se podrá fichar desde los móviles u ordenadores autorizados de cada persona (hasta 3). Evita que un compañero fiche por otro desde su propio móvil.</div></div><input type="checkbox" id="s-vinc"></div>
+            <div class="interruptor" style="margin-top:10px"><div><h3>Autorizar solo el primer dispositivo</h3><div class="m">El primer dispositivo con el que ficha cada persona queda autorizado sin que tengas que aprobarlo. Los siguientes (móvil nuevo, otro ordenador) sí los apruebas tú en Personal.</div></div><input type="checkbox" id="s-vinc-auto"></div>
+            <p class="m" style="margin-top:10px">Siempre activo: si un mismo dispositivo ficha por dos personas en menos de 12 horas, te llega un email y aparece en Admin › Hoy › Alertas. También se anota cuando alguien ficha desde un dispositivo nuevo.</p>
+          </div>
+          <div class="card">
             <h2>Conservación de los registros</h2>
             <p class="ayuda">La ley obliga a guardar el registro de jornada 4 años. Pasado ese plazo conviene borrarlo (protección de datos). Primero se muestra cuántos hay; no se borra nada sin tu confirmación.</p>
             <button class="btn sec" id="s-purgar">Revisar registros de más de 4 años</button>
           </div>
           <div class="card">
             <h2>Avisos por email</h2>
-            <p class="ayuda">Aquí llegan las solicitudes de vacaciones, horas extra y correcciones de fichaje, y el resumen de quién olvidó fichar.</p>
-            <label for="s-emails">Enviar los avisos a (separa varios con comas)</label>
-            <input id="s-emails" type="text" inputmode="email" placeholder="javier@arquiforma.com">
+            <p class="ayuda">Elige quién recibe cada tipo de aviso. Pausa a alguien (por ejemplo, mientras haces pruebas) sin quitarlo. Recuerda pulsar «Guardar ajustes».</p>
+            <div id="s-destinos"></div>
+            <div class="fila2" style="margin-top:10px">
+              <div><input id="s-dest-nuevo" type="email" inputmode="email" autocomplete="off" placeholder="otro@arquiforma.com" aria-label="Nuevo destinatario"></div>
+              <div><button class="btn sec" id="s-dest-add">+ Añadir</button></div>
+            </div>
             <div id="s-email-info" class="det"></div>
             <button class="btn sec" id="s-probar" style="margin-top:12px">Enviar email de prueba</button>
           </div>
@@ -712,6 +753,7 @@
         </ul>
         <div style="height:14px"></div>
         <button class="btn sec" id="b-salir">Cerrar sesión en este móvil</button>
+        <p class="m" id="yo-version" style="text-align:center;margin-top:12px"></p>
       </div>
       <div class="card hidden" id="yo-nominas">
         <h2>Mis nóminas</h2>
@@ -738,10 +780,20 @@
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="hoja" id="modal-hoja"></div></div>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <div id="barra" class="barra hidden"></div>
+  <!-- Pantalla de mantenimiento / actualización obligatoria -->
+  <div id="bloqueo-app" class="bloqueo hidden">
+    <div class="card" style="max-width:420px;margin:0 auto;text-align:center">
+      <div id="bq-icono" style="font-size:44px">🛠️</div>
+      <h2 id="bq-titulo" style="margin-top:6px">App en mantenimiento</h2>
+      <p id="bq-texto" class="ayuda" style="font-size:15px"></p>
+      <button class="btn" id="bq-boton">Reintentar</button>
+      <p class="m" id="bq-pie" style="margin-top:10px"></p>
+    </div>
+  </div>
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=18"></script>
-  <script src="app.js?v=18"></script>
+  <script src="geo.js?v=14"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

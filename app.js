@@ -1,4 +1,5 @@
-/* app.js — PWA de fichaje (v11: perfil «Ordenador» con equipo autorizado, borrado de registros antiguos) */
+/* app.js — PWA de fichaje (v14: control de versiones y modo mantenimiento) */
+/* La versión debe coincidir con VERSION_APP de Code.gs y con version.json */
 (function () {
   'use strict';
 
@@ -53,6 +54,24 @@
   function nombreEmpresa(id) { var e = S.empresas.filter(function (x) { return x.id === id; })[0]; return e ? e.nombre : ''; }
   function multiempresa() { return S.empresas.length > 1; }
   function deFiltro(u) { return !S.filtro || u.idEmpresa === S.filtro; }
+  /** Empresa de un email (según la lista de empleados cargada). */
+  function empDe(email) {
+    if (!S.empleados) return null;
+    if (!S.mapaEmp || S.mapaEmpDe !== S.empleados) {
+      S.mapaEmp = {}; S.mapaEmpDe = S.empleados;
+      S.empleados.forEach(function (u) { S.mapaEmp[String(u.email).toLowerCase()] = u.idEmpresa; });
+    }
+    return S.mapaEmp[String(email || '').toLowerCase()];
+  }
+  /** Copia de la respuesta con sus listas filtradas por la empresa elegida (sin volver a preguntar al servidor). */
+  function porEmpresa(r, claves) {
+    if (!S.filtro || !S.empleados) return r;
+    var c = Object.assign({}, r);
+    claves.forEach(function (k) {
+      if (Array.isArray(r[k])) c[k] = r[k].filter(function (x) { var e = x.idEmpresa || empDe(x.email); return !e || e === S.filtro; });
+    });
+    return c;
+  }
   function actualizarEmpresas(lista) {
     if (!lista) return;
     S.empresas = lista;
@@ -97,12 +116,14 @@
     var nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
     return so + ' · ' + nav;
   }
+  var APP_V = 14;
   var enVuelo = 0;
   function barra(d) { enVuelo = Math.max(0, enVuelo + d); $('barra').classList.toggle('hidden', !enVuelo); }
   function api(payload) {
     if (!navigator.onLine) return Promise.reject(new Error('Sin conexión a Internet.'));
     barra(1);
     if (S.token && !payload.token) payload.token = S.token;
+    payload.v = APP_V;
     if (EQUIPO && (payload.action === 'estado' || payload.action === 'fichar' || payload.action === 'solicitarEquipo')) payload.equipo = EQUIPO;
     if (payload.action.indexOf('admin') === 0 && payload.action !== 'adminUnlock') payload.adminToken = S.adminToken;
     return fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), redirect: 'follow' })
@@ -111,6 +132,8 @@
         if (!j.ok) {
           if (j.codigo === 'SESION') cerrarSesionLocal();
           if (j.codigo === 'ADMIN_BLOQUEADO') bloquearAdmin();
+          if (j.codigo === 'MANTENIMIENTO') mostrarBloqueo('mantenimiento', j.error);
+          if (j.codigo === 'ACTUALIZAR') mostrarBloqueo('actualizar', j.error);
           throw new Error(j.error || 'Error desconocido');
         }
         return j;
@@ -257,6 +280,7 @@
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
       $('nav-coches').classList.toggle('hidden', !r.cochesUnico);
       S.nominasActivas = !!r.nominasActivas;
+      quitarBloqueo(); avisosAdminVersion(r);
       S.equipo = r.equipo || null;
       aplicarModulos(r.modulos);
       $('yo-nominas').classList.toggle('hidden', !S.nominasActivas);
@@ -329,12 +353,14 @@
     aviso.innerHTML = ''; if (sub) sub.textContent = '';
     if (S.estado === 'PAUSA') { habilitado = false; if (sub) sub.textContent = 'Termina la pausa antes'; }
     if (S.provisional) { b.disabled = true; if (sub) sub.textContent = 'Conectando…'; return; }
-    if (S.usuario && S.usuario.perfil === 'Ordenador' && S.equipo && !S.equipo.autorizado) {
+    if (S.usuario && S.equipo && !S.equipo.autorizado) {
+      var pc = S.usuario.perfil === 'Ordenador';
       habilitado = false;
       aviso.innerHTML = S.equipo.pendiente
-        ? '<div class="aviso warn">Este ordenador está <b>pendiente de autorización</b>. Podrás fichar en cuanto administración lo apruebe.</div>'
-        : '<div class="aviso warn">Solo puedes fichar desde tu <b>ordenador de trabajo autorizado</b>. Si estás en él, pide la autorización:' +
-          '<div style="margin-top:8px"><button class="btn sec peq" id="b-equipo">Autorizar este ordenador</button></div></div>';
+        ? '<div class="aviso warn">Este ' + (pc ? 'ordenador' : 'dispositivo') + ' está <b>pendiente de autorización</b>. Podrás fichar en cuanto administración lo apruebe.</div>'
+        : '<div class="aviso warn">' + (pc ? 'Solo puedes fichar desde tu <b>ordenador de trabajo autorizado</b>. Si estás en él, pide la autorización:'
+             : 'Solo puedes fichar desde <b>tus dispositivos autorizados</b>. Si este móvil u ordenador es tuyo, pide la autorización:') +
+          '<div style="margin-top:8px"><button class="btn sec peq" id="b-equipo">Autorizar este ' + (pc ? 'ordenador' : 'dispositivo') + '</button></div></div>';
       var be = $('b-equipo');
       if (be) be.addEventListener('click', function () {
         cargando(true);
@@ -461,8 +487,10 @@
 
   $('adm-empresa').addEventListener('change', function () {
     S.filtro = this.value;
+    pintarListasEmpleados(); // al instante, con los datos que ya hay
     var activo = document.querySelector('#adm-seg button.activo');
     abrirPanel(activo ? activo.dataset.p : 'p-hoy');
+    actualizarBadge();
   });
 
   function abrirPanel(id) {
@@ -470,9 +498,10 @@
     $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
     document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.classList.toggle('activo', b.dataset.p === id); });
     document.querySelectorAll('.panel').forEach(function (p) { p.classList.toggle('hidden', p.id !== id); });
-    if (id === 'p-hoy') cargarResumen();
+    if (id === 'p-hoy') { cargarResumen(); cargarAlertas(); }
     if (id === 'p-calendario') cargarEmpleados().then(cargarCalendario);
     if (id === 'p-personal' || id === 'p-corregir' || id === 'p-informes' || id === 'p-nominas') cargarEmpleados();
+    if (id === 'p-personal') { limpiarBusquedaAuto(); setTimeout(limpiarBusquedaAuto, 600); }
     if (id === 'p-vacaciones') cargarSolicitudes();
     if (id === 'p-nominas') cargarNominas();
     if (id === 'p-ajustes' || (id === 'p-informes' && !S.ajustes)) cargarAjustes();
@@ -488,9 +517,12 @@
   $('a-ver').addEventListener('click', cargarResumen);
   function cargarResumen() {
     if (!$('a-filas').innerHTML) $('a-filas').innerHTML = '<div class="m">Cargando…</div>';
-    apiCache({ action: 'adminResumen', fecha: $('a-fecha').value, empresa: S.filtro }, function (r) {
-      var t = r.totales;
-      $('a-festivo').innerHTML = r.festivo ? '<div class="aviso info">Día festivo: ' + esc(r.festivo) + '</div>' : '';
+    apiCache({ action: 'adminResumen', fecha: $('a-fecha').value }, function (r0) {
+      var r = porEmpresa(r0, ['filas']), fl = r.filas;
+      var t = { plantilla: fl.length, ficharon: fl.filter(function (f) { return f.fichajes.length; }).length,
+                trabajandoAhora: fl.filter(function (f) { return f.estado === 'Trabajando'; }).length, incidencias: fl.filter(function (f) { return f.incidencia; }).length };
+      var fest = r0.festivo || (S.filtro && r0.festivosEmp ? r0.festivosEmp[S.filtro] : null);
+      $('a-festivo').innerHTML = fest ? '<div class="aviso info">Día festivo: ' + esc(fest) + '</div>' : '';
       $('a-kpis').innerHTML = [['Plantilla', t.plantilla], ['Ficharon', t.ficharon], ['Trabajando', t.trabajandoAhora], ['Incidencias', t.incidencias]]
         .map(function (k) { return '<div class="kpi"><b>' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('');
       $('a-filas').innerHTML = r.filas.map(function (f) {
@@ -519,6 +551,14 @@
       S.empleadosT = Date.now(); S.empleadosP = null;
       S.empleados = r.usuarios; S.sedesLista = r.sedes;
       actualizarEmpresas(r.empresas);
+      pintarListasEmpleados();
+    }).catch(function (e) { S.empleadosP = null; toast(e.message); });
+    return S.empleadosP;
+  }
+  function pintarListasEmpleados() {
+    if (!S.empleados) return;
+    var r = { usuarios: S.empleados };
+    (function () {
       pintarEmpleados();
       var opts = r.usuarios.filter(function (u) { return u.activo && deFiltro(u); }).map(function (u) {
         return '<option value="' + esc(u.email) + '">' + esc(u.nombre) + '</option>';
@@ -532,8 +572,7 @@
       }).join('');
       if (cSel) $('c-empleado').value = cSel;
       if (iSel) $('i-empleado').value = iSel;
-    }).catch(function (e) { S.empleadosP = null; toast(e.message); });
-    return S.empleadosP;
+    })();
   }
   function pintarEmpleados() {
     var q = $('u-buscar').value.trim().toLowerCase();
@@ -544,7 +583,7 @@
     $('u-lista').innerHTML = lista.map(function (u, i) {
       return '<li class="click" data-email="' + esc(u.email) + '"><div><div class="t">' + esc(u.nombre) + (u.esAdmin ? ' <span class="chip">admin</span>' : '') +
         (u.tienePin ? '' : ' <span class="chip">sin PIN</span>') + (u.sinGeocerca && u.perfil === 'Oficina' ? ' <span class="chip">ficha fuera</span>' : '') +
-        (u.equipo && u.equipo.pendiente ? ' <span class="chip est-PENDIENTE">ordenador por autorizar</span>' : '') +
+        (u.equipo && u.equipo.pendiente ? ' <span class="chip est-PENDIENTE">dispositivo por autorizar</span>' : '') +
         '</div><div class="m">' + (multiempresa() && !S.filtro ? esc(nombreEmpresa(u.idEmpresa)) + ' · ' : '') + esc(u.puesto ? u.puesto + ' · ' : '') + esc(u.email) + '</div></div>' +
         '<span class="perfil ' + (u.activo ? esc(u.perfil) : 'baja') + '">' + (u.activo ? esc(u.perfil) : 'Baja') + '</span></li>';
     }).join('') || '<li class="m">Sin resultados.</li>';
@@ -552,7 +591,13 @@
       li.addEventListener('click', function () { editarEmpleado(li.dataset.email); });
     });
   }
-  $('u-buscar').addEventListener('input', pintarEmpleados);
+  // El navegador intentaba rellenar este campo con tu email guardado: se bloquea hasta que lo tocas tú
+  $('u-buscar').addEventListener('focus', function () { this.removeAttribute('readonly'); });
+  $('u-buscar').addEventListener('input', function () { S.buscarTecleado = true; pintarEmpleados(); });
+  function limpiarBusquedaAuto() {
+    var b = $('u-buscar');
+    if (!S.buscarTecleado && b.value) { b.value = ''; pintarEmpleados(); }
+  }
   $('u-nuevo').addEventListener('click', function () { editarEmpleado(null); });
   $('u-pin-todos').addEventListener('click', function () {
     var quien = S.filtro ? 'los empleados de ' + nombreEmpresa(S.filtro) : 'todos los empleados activos';
@@ -626,12 +671,15 @@
     var pintarEquipo = function () {
       var f = $('m-equipo-fila'); if (!f) return;
       var eq = u.equipo || {};
-      f.classList.toggle('hidden', $('m-perfil').value !== 'Ordenador');
-      f.innerHTML = '<b>Ordenador de fichaje:</b> ' + (eq.autorizado ? 'autorizado' : 'ninguno') + (eq.desc ? ' (' + esc(eq.desc) + ')' : '') +
-        (eq.pendiente ? '<br><b>Ha pedido autorizar un ordenador.</b> Hazlo solo si te consta que es su equipo de trabajo.' +
+      var pc = $('m-perfil').value === 'Ordenador', vinc = !!(S.ajustes && S.ajustes.config.VINCULAR_DISPOSITIVO);
+      f.classList.toggle('hidden', !pc && !vinc && !eq.autorizado && !eq.pendiente);
+      f.innerHTML = '<b>' + (pc ? 'Ordenador de fichaje' : 'Dispositivos para fichar') + ':</b> ' +
+        (eq.autorizado ? esc(eq.desc || ((eq.num || 1) + ' autorizado(s)')) : 'ninguno') +
+        (eq.pendiente ? '<br><b>Pide autorizar:</b> ' + esc(eq.pide || 'un dispositivo') + '. Hazlo solo si te consta que es ' + (pc ? 'su ordenador de trabajo' : 'suyo') +
+          (pc && /Android|iPhone/.test(eq.pide || '') ? ' — <b>ojo: parece un móvil</b>' : '') + '.' +
           '<div class="mini"><button data-eq="autorizar">Autorizar</button><button data-eq="rechazar">Rechazar</button></div>'
-          : (eq.autorizado ? '<div class="mini"><button data-eq="quitar">Quitar ordenador</button></div>' :
-             '<br>Para autorizarlo: que entre en la app desde su ordenador de trabajo y pulse «Autorizar este ordenador».'));
+          : (eq.autorizado ? '<div class="mini"><button data-eq="quitar">Quitar todos</button></div>' :
+             '<br>Para autorizarlo: que entre en la app desde ' + (pc ? 'su ordenador de trabajo' : 'su móvil') + ' y pulse «Autorizar este ' + (pc ? 'ordenador' : 'dispositivo') + '».'));
       f.querySelectorAll('[data-eq]').forEach(function (b) {
         b.addEventListener('click', function () {
           cargando(true);
@@ -943,12 +991,14 @@
       $('s-recordatorios').checked = !!r.config.RECORDATORIOS;
       $('s-vac').value = r.config.VACACIONES_DIAS == null ? 22 : r.config.VACACIONES_DIAS;
       $('s-nominas').checked = !!r.config.NOMINAS_ACTIVAS;
-      $('s-emails').value = r.config.EMAIL_AVISOS || '';
+      S.destinos = JSON.parse(JSON.stringify(r.config.avisosDestinos || [])); S.tiposAviso = r.config.tiposAviso || {};
+      cargarEmpleados().then(function () { pintarVersionAdmin(r.config); });
+      pintarDestinos();
       $('s-mod-vac').checked = r.config.VACACIONES_ACTIVAS !== false; $('s-mod-he').checked = r.config.HORAS_EXTRA_ACTIVAS !== false;
       $('s-mod-cor').checked = r.config.CORRECCIONES_ACTIVAS !== false; $('s-mod-inc').checked = r.config.INCIDENCIAS_ACTIVAS !== false;
       $('s-admin-min').value = String(r.config.ADMIN_MINUTOS || 360);
-      $('s-email-info').innerHTML = 'Ahora llegan a: <b>' + esc((r.config.emailsAvisoEfectivos || []).join(', ')) + '</b>' +
-        (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
+      $('s-vinc').checked = !!r.config.VINCULAR_DISPOSITIVO; $('s-vinc-auto').checked = r.config.VINCULAR_AUTO_PRIMERO !== false;
+      $('s-email-info').innerHTML = (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
       $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
       $('s-h-salida').value = r.config.HORA_AVISO_SALIDA || '18:00';
       $('s-h-viernes').value = r.config.HORA_AVISO_SALIDA_VIERNES || '14:30';
@@ -961,6 +1011,36 @@
       pintarSedes(r.sedes);
     }).catch(function (e) { toast(e.message); });
   }
+  function pintarDestinos() {
+    var tipos = S.tiposAviso || {};
+    $('s-destinos').innerHTML = (S.destinos || []).map(function (d, i) {
+      return '<div class="dest' + (d.activo ? '' : ' pausado') + '"><div class="cab"><b style="word-break:break-all">' + esc(d.email) + '</b>' +
+        '<div style="display:flex;gap:6px"><button class="btn sec peq" data-dpausa="' + i + '">' + (d.activo ? 'Pausar' : 'Reanudar') + '</button>' +
+        '<button class="btn peligro peq" data-dquita="' + i + '" aria-label="Quitar">×</button></div></div>' +
+        (d.activo ? '' : '<div class="m" style="margin-top:4px">En pausa: no recibe ningún aviso.</div>') +
+        '<div class="tipos">' + Object.keys(tipos).map(function (k) {
+          return '<label><input type="checkbox" data-dtipo="' + i + '|' + k + '"' + (d.tipos[k] !== false ? ' checked' : '') + (d.activo ? '' : ' disabled') + '>' + esc(tipos[k]) + '</label>';
+        }).join('') + '</div></div>';
+    }).join('') || '<p class="m">Nadie recibe avisos. Añade al menos un email.</p>';
+    $('s-destinos').querySelectorAll('[data-dpausa]').forEach(function (b) {
+      b.addEventListener('click', function () { var d = S.destinos[Number(b.dataset.dpausa)]; d.activo = !d.activo; pintarDestinos(); });
+    });
+    $('s-destinos').querySelectorAll('[data-dquita]').forEach(function (b) {
+      b.addEventListener('click', function () { S.destinos.splice(Number(b.dataset.dquita), 1); pintarDestinos(); });
+    });
+    $('s-destinos').querySelectorAll('[data-dtipo]').forEach(function (c) {
+      c.addEventListener('change', function () { var p = c.dataset.dtipo.split('|'); S.destinos[Number(p[0])].tipos[p[1]] = c.checked; });
+    });
+  }
+  $('s-dest-add').addEventListener('click', function () {
+    var e = $('s-dest-nuevo').value.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return toast('Escribe un email válido.');
+    S.destinos = S.destinos || [];
+    if (S.destinos.some(function (d) { return d.email === e; })) return toast('Ya está en la lista.');
+    var t = {}; Object.keys(S.tiposAviso || {}).forEach(function (k) { t[k] = true; });
+    S.destinos.push({ email: e, activo: true, tipos: t }); $('s-dest-nuevo').value = ''; pintarDestinos();
+    toast('Añadido. Pulsa «Guardar ajustes» para que cuente.');
+  });
   $('s-purgar').addEventListener('click', function () {
     cargando(true, 'Revisando…');
     api({ action: 'adminPurgarAntiguos' }).then(function (r) {
@@ -1029,9 +1109,10 @@
     api({ action: 'adminGuardarAjustes', empresas: emps, config: { PRECISION_MAX_M: num($('s-prec').value),
           SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value),
           GEOCERCA_ACTIVA: $('s-geocerca').checked, RECORDATORIOS: $('s-recordatorios').checked,
-          VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, EMAIL_AVISOS: $('s-emails').value.trim(),
+          VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, AVISOS_DESTINOS: S.destinos || undefined,
           VACACIONES_ACTIVAS: $('s-mod-vac').checked, HORAS_EXTRA_ACTIVAS: $('s-mod-he').checked, CORRECCIONES_ACTIVAS: $('s-mod-cor').checked,
           INCIDENCIAS_ACTIVAS: $('s-mod-inc').checked, ADMIN_MINUTOS: num($('s-admin-min').value),
+          VINCULAR_DISPOSITIVO: $('s-vinc').checked, VERSION_MODO: $('s-ver-modo').value, VINCULAR_AUTO_PRIMERO: $('s-vinc-auto').checked,
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
           HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
           JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
@@ -1455,7 +1536,8 @@
 
   // ----- Correcciones pedidas (admin) -----
   function cargarCorreccionesAdmin() {
-    return apiCache({ action: 'adminCorreccionesPend', empresa: S.filtro }, function (r) {
+    return apiCache({ action: 'adminCorreccionesPend' }, function (r0) {
+      var r = porEmpresa(r0, ['pendientes']);
       var n = r.pendientes.length, bd = $('adm-badge-co');
       bd.textContent = n; bd.classList.toggle('hidden', !n);
       $('co-pend-card').classList.toggle('hidden', !n);
@@ -1500,7 +1582,8 @@
   // ----- Horas extra (admin) -----
   function cargarHorasExtraAdmin() {
     if (!$('he-pendientes').innerHTML) $('he-pendientes').innerHTML = '<p class="m">Cargando…</p>';
-    return apiCache({ action: 'adminHorasExtra', empresa: S.filtro }, function (r) {
+    return apiCache({ action: 'adminHorasExtra' }, function (r0) {
+      var r = porEmpresa(r0, ['pendientes', 'resueltas', 'totales']);
       var bd = $('adm-badge-he'); bd.textContent = r.pendientes.length; bd.classList.toggle('hidden', !r.pendientes.length);
       $('he-a-anio').textContent = r.anio;
       $('he-pendientes').innerHTML = r.pendientes.map(function (h) {
@@ -1547,12 +1630,32 @@
   }
 
   // ----- Vacaciones (admin) -----
+  function cargarAlertas() {
+    return apiCache({ action: 'adminAlertas' }, function (r0) {
+      var r = porEmpresa(r0, ['alertas']);
+      pintarBadge('adm-badge-al', r.alertas.length);
+      $('al-card').classList.toggle('hidden', !r.alertas.length);
+      $('al-lista').innerHTML = r.alertas.map(function (a) {
+        return '<li><div><div class="t">' + (a.grave ? '🔴 Mismo dispositivo para varias personas' : 'Dispositivo nuevo') + '</div>' +
+          '<div class="m">' + esc(fechaHoraCorta(a.fecha)) + ' · ' + esc(a.detalle) + '</div></div>' +
+          '<button class="btn sec peq" data-alr="' + esc(a.id) + '">Revisada</button></li>';
+      }).join('');
+      $('al-lista').querySelectorAll('[data-alr]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          api({ action: 'adminRevisarAlerta', id: b.dataset.alr }).then(function () { cargarAlertas(); }).catch(function (e) { toast(e.message); });
+        });
+      });
+    }).catch(function () {});
+  }
+  $('al-todas').addEventListener('click', function () {
+    api({ action: 'adminRevisarAlerta', todas: true }).then(function (k) { toast(k.mensaje); cargarAlertas(); }).catch(function (e) { toast(e.message); });
+  });
   function pintarBadge(id, n) { var b = $(id); if (b) { b.textContent = n; b.classList.toggle('hidden', !n); } }
   function actualizarBadge(n) {
     if (n !== undefined) return pintarBadge('adm-badge', n);
     apiCache({ action: 'adminBadges', empresa: S.filtro }, function (r) {
       pintarBadge('adm-badge', r.vacaciones); pintarBadge('adm-badge-he', r.horasExtra);
-      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias); pintarBadge('adm-badge-pe', r.equipos || 0);
+      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias); pintarBadge('adm-badge-pe', r.equipos || 0); pintarBadge('adm-badge-al', r.alertas || 0);
       aplicarModulosAdmin(r.modulos);
     }).catch(function () {});
   }
@@ -1582,7 +1685,8 @@
   }
   function cargarSolicitudes() {
     if (!$('v-pendientes').innerHTML) $('v-pendientes').innerHTML = '<p class="m">Cargando…</p>';
-    return apiCache({ action: 'adminSolicitudes', empresa: S.filtro }, function (r) {
+    return apiCache({ action: 'adminSolicitudes' }, function (r0) {
+      var r = porEmpresa(r0, ['pendientes', 'resueltas', 'saldos']);
       actualizarBadge(r.pendientes.length);
       $('v-pendientes').innerHTML = r.pendientes.map(function (x) {
         var queda = x.disponibles == null ? '' : ' · le quedan ' + x.disponibles + (x.disponibles === 1 ? ' día' : ' días') + ' sin contar esta';
@@ -1681,7 +1785,8 @@
   (function () { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); $('n-mes').value = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2); })();
   $('n-mes').addEventListener('change', function () { cargarNominas(); });
   function cargarNominas() {
-    return api({ action: 'adminNominas', mes: $('n-mes').value, empresa: S.filtro }).then(function (r) {
+    return apiCache({ action: 'adminNominas', mes: $('n-mes').value }, function (r0) {
+      var r = porEmpresa(r0, ['nominas']);
       $('n-estado').innerHTML = r.activas
         ? '<div class="aviso ok">Los empleados <b>ven</b> sus nóminas en «Yo». Se desactiva en Ajustes.</div>'
         : '<div class="aviso warn">Los empleados <b>no ven</b> las nóminas: puedes subirlas y activarlas cuando quieras en Ajustes › Vacaciones y nóminas.</div>';
@@ -1862,7 +1967,8 @@
   // ----- Incidencias (admin) -----
   function cargarIncidenciasAdmin() {
     if (!$('ai-abiertas').innerHTML) $('ai-abiertas').innerHTML = '<p class="m">Cargando…</p>';
-    return apiCache({ action: 'adminIncidencias', empresa: S.filtro }, function (r) {
+    return apiCache({ action: 'adminIncidencias' }, function (r0) {
+      var r = porEmpresa(r0, ['abiertas', 'cerradas']);
       pintarBadge('adm-badge-in', r.abiertas.filter(function (x) { return x.estado === 'ABIERTA'; }).length);
       $('ai-abiertas').innerHTML = r.abiertas.map(function (x) {
         return '<div class="fila-admin"><div class="cab"><b>' + (x.urgente ? '🔴 ' : '') + esc(x.asunto) + '</b><span class="chip est-PENDIENTE">' + esc(x.estadoTxt) + '</span></div>' +
@@ -1897,6 +2003,120 @@
         .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
     });
   }
+
+  // =================================================================
+  // VERSIONES Y MANTENIMIENTO
+  // =================================================================
+  $('yo-version').textContent = 'Versión ' + APP_V;
+  /** Borra la caché de la app y recarga para coger la última versión publicada. */
+  function actualizarApp() {
+    cargando(true, 'Actualizando la app…');
+    var p = [];
+    if (window.caches) p.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+    if (navigator.serviceWorker) p.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.update().catch(function () {}); })); }));
+    Promise.all(p).catch(function () {}).then(function () { location.reload(); });
+  }
+  /** ¿Hay en GitHub una versión más nueva que esta? Si la hay, se actualiza sola (como mucho 2 intentos). */
+  function comprobarVersionWeb() {
+    if (!navigator.onLine) return;
+    fetch('version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !(Number(j.v) > APP_V)) return;
+      var clave = 'fichaje_act_' + j.v, n = 0;
+      try { n = Number(sessionStorage.getItem(clave) || 0); sessionStorage.setItem(clave, n + 1); } catch (e) { /* */ }
+      if (n < 2) actualizarApp();
+      else mostrarBloqueo('actualizar', 'Hay una versión nueva (' + j.v + ') pero este dispositivo no consigue descargarla. Cierra la app del todo y vuelve a abrirla.');
+    }).catch(function () {});
+  }
+  comprobarVersionWeb();
+  var ultimaComprobacion = Date.now();
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && Date.now() - ultimaComprobacion > 5 * 60000) { ultimaComprobacion = Date.now(); comprobarVersionWeb(); }
+  });
+
+  var reintento = null;
+  function mostrarBloqueo(tipo, texto) {
+    var mt = tipo === 'mantenimiento';
+    $('bq-icono').textContent = mt ? '🛠️' : '⬆️';
+    $('bq-titulo').textContent = mt ? 'App en mantenimiento' : 'Actualiza la app';
+    $('bq-texto').textContent = texto || '';
+    $('bq-boton').textContent = mt ? 'Reintentar' : 'Actualizar';
+    $('bq-pie').textContent = mt ? 'Se comprobará sola cada minuto.' : 'Versión instalada: ' + APP_V;
+    $('bq-boton').onclick = mt ? function () { comprobarMantenimiento(true); } : actualizarApp;
+    $('bloqueo-app').classList.remove('hidden');
+    cargando(false);
+    if (mt && !reintento) reintento = setInterval(function () { comprobarMantenimiento(false); }, 60000);
+  }
+  function quitarBloqueo() {
+    $('bloqueo-app').classList.add('hidden');
+    if (reintento) { clearInterval(reintento); reintento = null; }
+  }
+  function comprobarMantenimiento(manual) {
+    if (!S.token) { quitarBloqueo(); return; }
+    if (manual) cargando(true, 'Comprobando…');
+    api({ action: 'estado' }).then(function (r) {
+      quitarBloqueo(); guardarEstadoLocal(r); S.provisional = false; pintarInicio(r, false, false); prepararGeo();
+    }).catch(function () { /* sigue en mantenimiento */ }).finally(function () { if (manual) cargando(false); });
+  }
+  /** Avisos solo para administradores: web y servidor con versiones distintas, o mantenimiento activo. */
+  function avisosAdminVersion(r) {
+    var div = $('aviso-admin-ver');
+    if (!div) { div = document.createElement('div'); div.id = 'aviso-admin-ver'; $('v-fichar').insertBefore(div, $('v-fichar').firstChild); }
+    var html = '';
+    if (r.usuario && r.usuario.esAdmin) {
+      if (r.version && r.version.servidor !== APP_V) html += '<div class="aviso bad">La web está en la versión <b>' + APP_V + '</b> y el servidor en la <b>' + r.version.servidor + '</b>. ' +
+        (r.version.servidor < APP_V ? 'Pega el Code.gs nuevo en Apps Script y haz «Nueva versión».' : 'Sube a GitHub los archivos nuevos.') + '</div>';
+      if (r.mantenimiento && r.mantenimiento.activo) html += '<div class="aviso warn">🛠️ <b>Modo mantenimiento activo.</b> Los demás no pueden usar la app. Se quita en Admin › Ajustes.</div>';
+    }
+    div.innerHTML = html;
+  }
+
+  // ----- Ajustes: versión y mantenimiento -----
+  function pintarVersionAdmin(cfg) {
+    var v = cfg.versiones || {}, m = cfg.mantenimiento || {};
+    $('ver-info').innerHTML = 'Web (GitHub): <b>' + APP_V + '</b> · Servidor (Apps Script): <b>' + (v.servidor || '?') + '</b> ' +
+      (v.servidor === APP_V ? '<span class="chip est-APROBADA">coinciden</span>' : '<span class="chip est-DENEGADA">no coinciden</span>') +
+      '<br>Se admite desde la versión ' + (v.minima || '?') + '.' +
+      ((v.antiguas || []).length ? '<br><b>Con versión antigua:</b> ' + v.antiguas.map(function (a) { return esc(a.nombre) + ' (v' + a.version + ')'; }).join(', ') : '<br>Nadie con versión antigua.') +
+      (v.sinDatos ? '<br>' + v.sinDatos + ' persona(s) aún no han abierto esta versión.' : '');
+    $('s-ver-modo').value = cfg.VERSION_MODO === 'avisar' ? 'avisar' : 'obligar';
+    S.mant = { activo: !!m.activo, permitidos: (m.permitidos || []).slice() };
+    $('mt-msg').value = m.mensaje || '';
+    $('mt-estado').innerHTML = m.activo ? '<div class="aviso warn"><b>Mantenimiento ACTIVO.</b> Solo administradores' + (m.permitidos.length ? ' y ' + m.permitidos.length + ' persona(s) más' : '') + ' pueden usar la app.</div>'
+                                        : '<div class="aviso ok">La app está disponible para todos.</div>';
+    $('mt-guardar').textContent = m.activo ? 'Guardar cambios del mantenimiento' : 'Activar mantenimiento';
+    var bq = $('mt-quitar');
+    if (m.activo && !bq) { bq = document.createElement('button'); bq.id = 'mt-quitar'; bq.className = 'btn peligro'; bq.textContent = 'Desactivar mantenimiento'; $('mt-guardar').parentNode.appendChild(bq); bq.addEventListener('click', function () { guardarMantenimiento(false); }); }
+    if (!m.activo && bq) bq.remove();
+    pintarPermitidos();
+  }
+  function pintarPermitidos() {
+    var q = $('mt-buscar').value.trim().toLowerCase();
+    var gente = (S.empleados || []).filter(function (u) { return u.activo && !u.esAdmin && (!q || u.nombre.toLowerCase().indexOf(q) >= 0); });
+    $('mt-lista').innerHTML = gente.map(function (u) {
+      return '<label style="display:flex;gap:8px;align-items:center;margin:6px 0;font-weight:500"><input type="checkbox" data-mt="' + esc(u.email) + '"' +
+        (S.mant.permitidos.indexOf(String(u.email).toLowerCase()) >= 0 ? ' checked' : '') + ' style="width:18px;height:18px">' + esc(u.nombre) + '</label>';
+    }).join('') || '<p class="m">Los administradores siempre pueden entrar.</p>';
+    $('mt-lista').querySelectorAll('[data-mt]').forEach(function (c) {
+      c.addEventListener('change', function () {
+        var e = c.dataset.mt.toLowerCase(), i = S.mant.permitidos.indexOf(e);
+        if (c.checked && i < 0) S.mant.permitidos.push(e); if (!c.checked && i >= 0) S.mant.permitidos.splice(i, 1);
+      });
+    });
+  }
+  $('mt-buscar').addEventListener('input', pintarPermitidos);
+  function guardarMantenimiento(activo) {
+    if (activo && !S.mant.activo && !confirm('¿Activar el mantenimiento? Los demás trabajadores no podrán fichar hasta que lo desactives.')) return;
+    cargando(true);
+    api({ action: 'adminMantenimiento', activo: activo, permitidos: S.mant.permitidos, mensaje: $('mt-msg').value.trim() })
+      .then(function (k) { toast(k.mensaje, 6000); return cargarAjustes(); })
+      .then(function () { return api({ action: 'estado' }).then(function (r) { avisosAdminVersion(r); }); })
+      .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  }
+  $('mt-guardar').addEventListener('click', function () { guardarMantenimiento(true); });
+  $('s-forzar').addEventListener('click', function () {
+    if (!confirm('¿Obligar a todos a usar ya la versión ' + APP_V + '? Quien tenga la anterior no podrá fichar hasta actualizar.')) return;
+    api({ action: 'adminForzarVersion' }).then(function (k) { toast(k.mensaje, 6000); cargarAjustes(); }).catch(function (e) { toast(e.message); });
+  });
 
   // ---------- Aviso «Instala la app en tu móvil» ----------
   // No sale si ya se abre desde el icono, si este móvil ya la tiene instalada o si pulsó «Ahora no» hace menos de 30 días.
