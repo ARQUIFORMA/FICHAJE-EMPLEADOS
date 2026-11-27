@@ -236,6 +236,7 @@
         <div class="fecha" id="fecha"></div>
         <div class="estado" id="estado"></div>
         <div id="aviso-jornada"></div>
+        <div id="aviso-confirmar"></div>
         <div id="aviso-geo"></div>
         <button id="b-principal" class="fichar entrada" disabled>Fichar<br>Entrada<small id="b-principal-sub"></small></button>
         <button id="b-pausa" class="btn sec hidden"></button>
@@ -440,6 +441,11 @@
 
         <!-- FICHAJES: ver y corregir -->
         <div id="p-corregir" class="panel hidden">
+          <div class="card hidden" id="cf-card">
+            <h2>Tus cambios: confirmación del trabajador</h2>
+            <p class="ayuda">Cuando añades o cambias una hora, el trabajador la confirma desde la app y entonces sale firmada en su hoja de registro. Mientras tanto, esa casilla de firma queda en blanco.</p>
+            <div id="cf-lista"></div>
+          </div>
           <div class="card hidden" id="co-pend-card">
             <h2>Correcciones pedidas por los empleados</h2>
             <div id="co-pend"></div>
@@ -627,7 +633,7 @@
             <label for="s-j-verano">Horas al día en verano (lunes a viernes)</label><input id="s-j-verano" type="time">
             <p class="m" style="margin-top:6px">El horario de verano se repite cada año en las mismas fechas.</p>
             <div class="interruptor" style="margin-top:16px"><div><h3>Fichar el almuerzo</h3><div class="m">Desactivado: no aparece el botón de almuerzo ni sus columnas en el Excel. Cuenta como trabajo igualmente, así que las horas no cambian. Los almuerzos ya fichados se conservan y siguen saliendo en el Excel de ese mes.</div></div><input type="checkbox" id="s-almuerzo"></div>
-            <div class="interruptor" style="margin-top:16px"><div><h3>Firma electrónica en la hoja de registro</h3><div class="m">Activado: en las casillas de Firma sale el nombre del trabajador (por ejemplo «J. Moreno»), porque cada hora la ficha él mismo con su usuario. Si la hora la puso o corrigió la empresa, sale «Corregido*». Desactivado: las casillas quedan en blanco para firmar a mano.</div></div><input type="checkbox" id="s-firma"></div>
+            <div class="interruptor" style="margin-top:16px"><div><h3>Firma electrónica en la hoja de registro</h3><div class="m">Activado: en las casillas de Firma sale el nombre del trabajador (por ejemplo «J. Moreno»), porque cada hora la ficha él mismo con su usuario. Si la hora la pidió corregir él, o la cambiaste tú y él la ha confirmado en la app, también lleva su firma; mientras no la confirme, esa casilla queda en blanco. Desactivado: las casillas quedan en blanco para firmar a mano.</div></div><input type="checkbox" id="s-firma"></div>
           </div>
           <div class="card">
             <h2>Apartados para los empleados</h2>

@@ -134,7 +134,7 @@
     barra(1);
     if (S.token && !payload.token) payload.token = S.token;
     payload.v = APP_V;
-    if (EQUIPO && (payload.action === 'estado' || payload.action === 'fichar' || payload.action === 'solicitarEquipo')) payload.equipo = EQUIPO;
+    if (EQUIPO && (payload.action === 'estado' || payload.action === 'fichar' || payload.action === 'solicitarEquipo' || payload.action === 'responderConfirmacion')) payload.equipo = EQUIPO;
     if (payload.action.indexOf('admin') === 0 && payload.action !== 'adminUnlock') payload.adminToken = S.adminToken;
     return fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), redirect: 'follow' })
       .then(function (r) { if (!r.ok) throw new Error('Servidor no disponible (' + r.status + ').'); return r.json(); })
@@ -308,6 +308,7 @@
         $('co-fecha').value = ja.fecha; itemsCorreccion([{ tipo: ja.tipo === 'INICIO_PAUSA' ? 'FIN_COMIDA' : 'SALIDA', hora: '' }]);
         if (ja.tipo !== 'INICIO_PAUSA') { var d = new Date(ja.fecha + 'T12:00:00').getDay(); $('co-items').querySelector('.co-hora').value = d === 5 ? '14:00' : '17:30'; }
       });
+      pintarAvisoConfirmar(r.confirmaciones || 0, provisional);
       cargarLogo(r.logoVer);
       if (!provisional && !yaPintado) prepararGeo();
       else if (provisional) { S.geo = null; actualizarBoton(); }
@@ -514,7 +515,7 @@
     if (id === 'p-nominas') cargarNominas();
     if (id === 'p-ajustes' || (id === 'p-informes' && !S.ajustes)) cargarAjustes();
     if (id === 'p-extra') cargarHorasExtraAdmin();
-    if (id === 'p-corregir') cargarCorreccionesAdmin();
+    if (id === 'p-corregir') { cargarCorreccionesAdmin(); cargarConfirmacionesAdmin(); }
     if (id === 'p-incidencias') cargarIncidenciasAdmin();
     if (id === 'p-ajustes') cargarCoches();
   }
@@ -823,7 +824,7 @@
       cargando(true);
       var p = f ? api({ action: 'adminModificarFichaje', id: f.id, hora: hora, tipo: $('mf-tipo').value, motivo: motivo })
                 : api({ action: 'adminCorreccion', email: $('c-empleado').value, fecha: fecha, hora: hora, tipo: $('mf-tipo').value, motivo: motivo });
-      p.then(function (r) { cerrarModal(); toast(r.mensaje, 5000); return verFichajes(); })
+      p.then(function (r) { cerrarModal(); toast(r.mensaje + ' El trabajador lo confirmará desde la app.', 6000); cargarConfirmacionesAdmin(); return verFichajes(); })
         .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
     });
   }
@@ -866,7 +867,7 @@
       var email = $('c-empleado').value;
       lista.reduce(function (p, x) {
         return p.then(function () { return api({ action: 'adminCorreccion', email: email, fecha: fecha, hora: x.hora, tipo: x.tipo, motivo: motivo }); });
-      }, Promise.resolve()).then(function () { cerrarModal(); toast('Jornada registrada.'); return verFichajes(); })
+      }, Promise.resolve()).then(function () { cerrarModal(); toast('Jornada registrada. El trabajador la confirmará desde la app.', 6000); cargarConfirmacionesAdmin(); return verFichajes(); })
         .catch(function (e) { toast(e.message, 6000); verFichajes(); }).finally(function () { cargando(false); });
     });
   }
@@ -1520,6 +1521,54 @@
     var sig = { ENTRADA: 'SALIDA', SALIDA: 'ENTRADA', INICIO_ALMUERZO: 'FIN_ALMUERZO', FIN_ALMUERZO: 'SALIDA', INICIO_COMIDA: 'FIN_COMIDA', FIN_COMIDA: 'SALIDA' }[l[l.length - 1].tipo] || 'SALIDA';
     l.push({ tipo: sig, hora: '' }); itemsCorreccion(l);
   });
+  // ----- Cambios hechos por administración que el trabajador tiene que confirmar -----
+  function pintarAvisoConfirmar(n, provisional) {
+    var el = $('aviso-confirmar'); if (!el) return;
+    if (provisional && !n) return;
+    el.innerHTML = n ? '<div class="aviso warn"><b>Administración ha corregido ' + (n === 1 ? 'un fichaje tuyo' : n + ' fichajes tuyos') + '.</b> ' +
+      'Revísalo y confírmalo para que conste en tu registro.<div style="margin-top:8px"><button class="btn peq" id="b-ver-confirmar">Revisar</button></div></div>' : '';
+    if ($('b-ver-confirmar')) $('b-ver-confirmar').addEventListener('click', abrirConfirmaciones);
+  }
+  function abrirConfirmaciones() {
+    cargando(true);
+    api({ action: 'misConfirmaciones' }).then(function (r) {
+      cargando(false);
+      if (!r.pendientes.length) { pintarAvisoConfirmar(0); return toast('No tienes cambios pendientes.'); }
+      abrirModal('<h2>Cambios en tu registro</h2><p class="ayuda">Administración ha hecho estos cambios en tus fichajes. Si son correctos, pulsa <b>Confirmo</b> y quedarán firmados con tu usuario. Si no, pulsa <b>No es correcto</b> y explica por qué.</p>' +
+        '<ul class="lista">' + r.pendientes.map(function (x) {
+          return '<li><div><div class="t">' + esc(fechaCorta(x.fecha)) + ' · ' + esc(x.descripcion) + '</div>' + (x.motivo ? '<div class="m">Motivo: ' + esc(x.motivo) + '</div>' : '') + '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="btn peq" data-cfok="' + esc(x.id) + '">Confirmo</button>' +
+            '<button class="btn sec peq" data-cfno="' + esc(x.id) + '">No es correcto</button></div></li>';
+        }).join('') + '</ul>' +
+        '<div class="acciones"><button class="btn sec" id="cf-cerrar">Más tarde</button>' + (r.pendientes.length > 1 ? '<button class="btn" id="cf-todos">Confirmo todos</button>' : '') + '</div>');
+      $('cf-cerrar').addEventListener('click', cerrarModal);
+      var responder = function (ids, conforme, comentario) {
+        cargando(true);
+        api({ action: 'responderConfirmacion', ids: ids, conforme: conforme, comentario: comentario || '' }).then(function (x) {
+          cerrarModal(); toast(x.mensaje, 5000);
+          pintarAvisoConfirmar(Math.max(0, r.pendientes.length - ids.length));
+          if (r.pendientes.length - ids.length > 0) abrirConfirmaciones();
+        }).catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+      };
+      if ($('cf-todos')) $('cf-todos').addEventListener('click', function () { responder(r.pendientes.map(function (x) { return x.id; }), true); });
+      document.querySelectorAll('[data-cfok]').forEach(function (b) { b.addEventListener('click', function () { responder([b.dataset.cfok], true); }); });
+      document.querySelectorAll('[data-cfno]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var x = r.pendientes.filter(function (y) { return y.id === b.dataset.cfno; })[0];
+          abrirModal('<h2>No es correcto</h2><p class="ayuda">' + esc(fechaCorta(x.fecha)) + ' · ' + esc(x.descripcion) + '</p>' +
+            '<label for="cf-txt">¿Qué es lo correcto? (por ejemplo, la hora real)</label><textarea id="cf-txt" maxlength="500"></textarea>' +
+            '<div class="acciones"><button class="btn sec" id="cf-volver">Volver</button><button class="btn" id="cf-enviar">Enviar</button></div>');
+          $('cf-volver').addEventListener('click', function () { cerrarModal(); abrirConfirmaciones(); });
+          $('cf-enviar').addEventListener('click', function () {
+            var t = $('cf-txt').value.trim();
+            if (t.length < 5) return toast('Explica brevemente qué no es correcto.');
+            responder([x.id], false, t);
+          });
+        });
+      });
+    }).catch(function (e) { cargando(false); toast(e.message, 6000); });
+  }
+
   function cargarCorrecciones() {
     apiCache({ action: 'misCorrecciones' }, function (r) {
       $('co-lista').innerHTML = r.solicitudes.map(function (x) {
@@ -1554,8 +1603,7 @@
   function cargarCorreccionesAdmin() {
     return apiCache({ action: 'adminCorreccionesPend' }, function (r0) {
       var r = porEmpresa(r0, ['pendientes']);
-      var n = r.pendientes.length, bd = $('adm-badge-co');
-      bd.textContent = n; bd.classList.toggle('hidden', !n);
+      S.nCoPend = r.pendientes.length; pintarBadgeCo();
       $('co-pend-card').classList.toggle('hidden', !n);
       $('co-pend').innerHTML = r.pendientes.map(function (x) {
         return '<div class="fila-admin"><div class="cab"><b>' + esc(x.nombre) + '</b><span class="m">' + esc(fechaCorta(x.fecha)) + '</span></div>' +
@@ -1569,6 +1617,46 @@
       $('co-pend').querySelectorAll('[data-cv]').forEach(function (b) {
         b.addEventListener('click', function () {
           var x = buscar(b.dataset.cv);
+          cargarEmpleados().then(function () {
+            $('c-empleado').value = x.email; $('c-desde').value = x.fecha; $('c-hasta').value = x.fecha; verFichajes();
+            setTimeout(function () { $('c-resumen').scrollIntoView({ behavior: 'smooth' }); }, 400);
+          });
+        });
+      });
+    }).catch(function () {});
+  }
+  function pintarBadgeCo() { pintarBadge('adm-badge-co', (S.nCoPend || 0) + (S.nCfRech || 0)); }
+  function cargarConfirmacionesAdmin() {
+    return apiCache({ action: 'adminConfirmaciones' }, function (r0) {
+      var r = porEmpresa(r0, ['confirmaciones']), l = r.confirmaciones;
+      S.nCfRech = l.filter(function (x) { return x.estado === 'RECHAZADA'; }).length; pintarBadgeCo();
+      $('cf-card').classList.toggle('hidden', !l.length);
+      $('cf-lista').innerHTML = l.map(function (x) {
+        var rech = x.estado === 'RECHAZADA';
+        return '<div class="fila-admin"><div class="cab"><b>' + esc(x.nombre) + '</b><span class="chip est-' + (rech ? 'DENEGADA' : 'PENDIENTE') + '">' + esc(x.estadoTxt) + '</span></div>' +
+          '<div class="det">' + esc(fechaCorta(x.fecha)) + ' · <b>' + esc(x.descripcion) + '</b>' + (rech && x.comentario ? '<br>Dice: «' + esc(x.comentario) + '»' : '') + '</div>' +
+          '<div class="acciones" style="margin-top:10px">' + (rech
+            ? '<button class="btn sec peq" data-cfv="' + esc(x.id) + '">Ver el día</button><button class="btn peq" data-cfc="' + esc(x.id) + '">Ya está hablado</button>'
+            : '<button class="btn sec peq" data-cfr="' + esc(x.email) + '">Recordárselo por email</button>') + '</div></div>';
+      }).join('');
+      var buscar = function (id) { return l.filter(function (x) { return x.id === id; })[0]; };
+      $('cf-lista').querySelectorAll('[data-cfr]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          cargando(true);
+          api({ action: 'adminGestionarConfirmacion', accion: 'recordar', email: b.dataset.cfr }).then(function (x) { toast(x.mensaje, 5000); })
+            .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+        });
+      });
+      $('cf-lista').querySelectorAll('[data-cfc]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          cargando(true);
+          api({ action: 'adminGestionarConfirmacion', accion: 'cerrar', id: b.dataset.cfc }).then(function (x) { toast(x.mensaje); cargarConfirmacionesAdmin(); })
+            .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+        });
+      });
+      $('cf-lista').querySelectorAll('[data-cfv]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var x = buscar(b.dataset.cfv);
           cargarEmpleados().then(function () {
             $('c-empleado').value = x.email; $('c-desde').value = x.fecha; $('c-hasta').value = x.fecha; verFichajes();
             setTimeout(function () { $('c-resumen').scrollIntoView({ behavior: 'smooth' }); }, 400);
@@ -1671,7 +1759,7 @@
     if (n !== undefined) return pintarBadge('adm-badge', n);
     apiCache({ action: 'adminBadges', empresa: S.filtro }, function (r) {
       pintarBadge('adm-badge', r.vacaciones); pintarBadge('adm-badge-he', r.horasExtra);
-      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias); pintarBadge('adm-badge-pe', r.equipos || 0); pintarBadge('adm-badge-al', r.alertas || 0);
+      S.nCoPend = r.correcciones; S.nCfRech = r.confirmaciones || 0; pintarBadgeCo(); pintarBadge('adm-badge-in', r.incidencias); pintarBadge('adm-badge-pe', r.equipos || 0); pintarBadge('adm-badge-al', r.alertas || 0);
       aplicarModulosAdmin(r.modulos);
     }).catch(function () {});
   }
