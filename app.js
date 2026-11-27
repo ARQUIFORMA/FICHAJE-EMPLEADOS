@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v16: registros en PDF y Excel con mejor formato) */
+/* app.js — PWA de fichaje (v17: registro de jornada modelo «Mañana / Tarde») */
 /* La versión debe coincidir con VERSION_APP de Code.gs y con version.json */
 (function () {
   'use strict';
@@ -116,7 +116,7 @@
     var nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
     return so + ' · ' + nav;
   }
-  var APP_V = 16;
+  var APP_V = 18;
   /** Botón de pausa: almuerzo antes de las 13:00 (si está activado en Ajustes) o comida desde las 13:00. */
   function pintarPausa() {
     var bp = $('b-pausa'); if (!bp) return;
@@ -659,7 +659,9 @@
       '<label for="m-nombre">Nombre completo</label><input id="m-nombre" value="' + esc(u.nombre) + '">' +
       (multiempresa() ? '<label for="m-empresa">Empresa</label><select id="m-empresa">' + empOpts + '</select>' : '<select id="m-empresa" class="hidden">' + empOpts + '</select>') +
       '<label for="m-puesto">Puesto / profesión (aparece en los Excel)</label><input id="m-puesto" value="' + esc(u.puesto || '') + '" placeholder="Ej.: Arquitecto técnico">' +
-      '<label for="m-nif">NIF (opcional, aparece en los Excel)</label><input id="m-nif" value="' + esc(u.nif || '') + '">' +
+      '<div class="fila2"><div><label for="m-nif">NIF</label><input id="m-nif" value="' + esc(u.nif || '') + '"></div>' +
+      '<div><label for="m-naf">Nº afiliación Seg. Social</label><input id="m-naf" value="' + esc(u.naf || '') + '" placeholder="03/12345678/90"></div></div>' +
+      '<div class="m">Salen en el registro de jornada.</div>' +
       '<div class="fila2"><div><label for="m-perfil">Perfil</label><select id="m-perfil">' +
       [['Oficina', 'Oficina'], ['Obra', 'Obra'], ['Teletrabajo', 'Teletrabajo'], ['Ordenador', 'Ordenador de trabajo']].map(function (p) {
         return '<option value="' + p[0] + '"' + (u.perfil === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
@@ -704,7 +706,7 @@
       var datos = { nuevo: nuevo, email: $('m-email').value.trim(), nombre: $('m-nombre').value.trim(), nif: $('m-nif').value.trim(),
                     perfil: $('m-perfil').value, idSede: $('m-sede').value, activo: $('m-activo').checked,
                     puesto: $('m-puesto').value.trim(), sinGeocerca: $('m-fuera').checked, idEmpresa: $('m-empresa').value,
-                    jornadaSemanal: $('m-jornada').value, diasVacaciones: $('m-vac').value };
+                    jornadaSemanal: $('m-jornada').value, diasVacaciones: $('m-vac').value, naf: $('m-naf').value.trim() };
       cargando(true);
       api({ action: 'adminGuardarUsuario', usuario: datos }).then(function (r) {
         if (r.pin) mostrarPin(datos.nombre, datos.email, r.pin); else { cerrarModal(); toast(r.mensaje); }
@@ -1006,6 +1008,7 @@
       $('s-mod-cor').checked = r.config.CORRECCIONES_ACTIVAS !== false; $('s-mod-inc').checked = r.config.INCIDENCIAS_ACTIVAS !== false;
       $('s-admin-min').value = String(r.config.ADMIN_MINUTOS || 360);
       $('s-almuerzo').checked = r.config.ALMUERZO_ACTIVO !== false;
+      $('s-firma').checked = r.config.FIRMA_APP !== false;
       $('s-vinc').checked = !!r.config.VINCULAR_DISPOSITIVO; $('s-vinc-auto').checked = r.config.VINCULAR_AUTO_PRIMERO !== false;
       $('s-email-info').innerHTML = (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
       $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
@@ -1121,7 +1124,7 @@
           VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, AVISOS_DESTINOS: S.destinos || undefined,
           VACACIONES_ACTIVAS: $('s-mod-vac').checked, HORAS_EXTRA_ACTIVAS: $('s-mod-he').checked, CORRECCIONES_ACTIVAS: $('s-mod-cor').checked,
           INCIDENCIAS_ACTIVAS: $('s-mod-inc').checked, ADMIN_MINUTOS: num($('s-admin-min').value),
-          VINCULAR_DISPOSITIVO: $('s-vinc').checked, VERSION_MODO: $('s-ver-modo').value, ALMUERZO_ACTIVO: $('s-almuerzo').checked, VINCULAR_AUTO_PRIMERO: $('s-vinc-auto').checked,
+          VINCULAR_DISPOSITIVO: $('s-vinc').checked, VERSION_MODO: $('s-ver-modo').value, ALMUERZO_ACTIVO: $('s-almuerzo').checked, FIRMA_APP: $('s-firma').checked, VINCULAR_AUTO_PRIMERO: $('s-vinc-auto').checked,
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
           HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
           JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
@@ -1183,6 +1186,9 @@
       return '<div class="empresa" data-id="' + esc(e.id) + '" data-nueva="' + (nueva ? '1' : '') + '">' +
         '<label>Nombre / razón social</label><input class="em-nombre" value="' + esc(e.nombre || '') + '">' +
         '<div class="fila2"><div><label>CIF</label><input class="em-cif" value="' + esc(e.cif || '') + '"></div>' +
+        '<div><label>Centro de trabajo</label><input class="em-centro" value="' + esc(e.centro || '') + '" placeholder="00"></div></div>' +
+        '<label>Código de Cuenta de Cotización (Seguridad Social)</label><input class="em-ccc" value="' + esc(e.ccc || '') + '" placeholder="03/1234567/89">' +
+        '<div class="fila2"><div></div>' +
         '<div><label>&nbsp;</label><div class="interruptor" style="height:48px"><span>Activa</span><input type="checkbox" class="em-activa"' + (e.activa !== false ? ' checked' : '') + '></div></div></div>' +
         '<label>Logo</label><div class="logo-prev em-logo">' + (nueva ? 'Guarda la empresa para poder subir su logo' : (e.logoId ? 'Cargando…' : 'Sin logo')) + '</div>' +
         (nueva ? '' : '<div class="acciones" style="margin-top:0"><button class="btn sec peq em-subir">Subir logo</button><button class="btn peligro peq em-quitar">Quitar logo</button></div>') +
@@ -1214,6 +1220,7 @@
   function leerEmpresas() {
     return Array.prototype.map.call($('s-empresas').querySelectorAll('.empresa'), function (div) {
       return { id: div.dataset.id, nombre: div.querySelector('.em-nombre').value.trim(), cif: div.querySelector('.em-cif').value.trim(),
+               ccc: div.querySelector('.em-ccc').value.trim(), centro: div.querySelector('.em-centro').value.trim(),
                activa: div.querySelector('.em-activa').checked };
     });
   }
