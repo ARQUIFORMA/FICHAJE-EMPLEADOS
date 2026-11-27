@@ -165,7 +165,7 @@
     .barra { position: fixed; top: 0; left: 0; height: 3px; width: 100%; z-index: 50; background: linear-gradient(90deg, transparent, var(--oficina), transparent);
       background-size: 50% 100%; background-repeat: no-repeat; animation: barra 1s linear infinite; }
     @keyframes barra { from { background-position: -50% 0; } to { background-position: 150% 0; } }
-    .pestanas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; background: #e6ebf0; padding: 4px; border-radius: 12px; margin-bottom: 14px; }
+    .pestanas { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 6px; background: #e6ebf0; padding: 4px; border-radius: 12px; margin-bottom: 14px; }
     .pestanas button { padding: 10px 4px; border-radius: 9px; background: transparent; font-weight: 600; font-size: 14px; color: var(--muted); line-height: 1.2; }
     .item-c { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr) 44px; gap: 8px; margin-top: 8px; align-items: center; }
     .item-c button { height: 44px; border-radius: 10px; background: var(--bad-bg); color: var(--bad); font-size: 18px; }
@@ -255,7 +255,32 @@
 
     <!-- VACACIONES (empleado) -->
     <section id="v-vacaciones" class="hidden">
-      <div class="pestanas" id="sol-tabs"><button data-t="sol-vac" class="activo">Vacaciones</button><button data-t="sol-he">Horas extra</button><button data-t="sol-cor">Corregir fichaje</button></div>
+      <div class="pestanas" id="sol-tabs"><button data-t="sol-vac" class="activo">Vacaciones</button><button data-t="sol-he">Horas extra</button><button data-t="sol-cor">Corregir fichaje</button><button data-t="sol-inc">Incidencias</button></div>
+      <div id="sol-inc" class="hidden">
+        <div class="card">
+          <h2>Comunicar una incidencia</h2>
+          <p class="ayuda">¿Falla el ordenador, el móvil, la app, algo de la oficina o de un vehículo? Cuéntalo aquí y te avisaremos por email cuando esté en marcha o resuelto.</p>
+          <label for="in-cat">Tipo</label>
+          <select id="in-cat">
+            <option value="INFORMATICA">Ordenador / informática</option><option value="MOVIL">Móvil o app</option>
+            <option value="OFICINA">Oficina e instalaciones</option><option value="VEHICULO">Vehículos</option>
+            <option value="MATERIAL">Material / herramientas</option><option value="OTRO">Otro</option>
+          </select>
+          <label for="in-asunto">Título</label>
+          <input id="in-asunto" maxlength="120" placeholder="Ej.: no imprime la impresora de la planta 1">
+          <label for="in-desc">Qué pasa</label>
+          <textarea id="in-desc" maxlength="1500" placeholder="Cuéntalo con detalle: desde cuándo, qué mensaje sale…"></textarea>
+          <div class="interruptor" style="margin-top:12px"><div><h3>Es urgente</h3><div class="m">No puedo trabajar por esto</div></div><input type="checkbox" id="in-urg"></div>
+          <input type="file" id="in-foto" accept="image/*" class="hidden">
+          <div class="mini"><button id="in-foto-btn">📷 Añadir foto (opcional)</button><span class="m" id="in-foto-txt" style="align-self:center"></span></div>
+          <div style="height:14px"></div>
+          <button class="btn" id="in-enviar">Enviar incidencia</button>
+        </div>
+        <div class="card">
+          <h2>Mis incidencias</h2>
+          <ul class="lista" id="in-lista"></ul>
+        </div>
+      </div>
       <div id="sol-cor" class="hidden">
         <div class="card">
           <h2>Corregir un fichaje</h2>
@@ -349,6 +374,7 @@
           <button data-p="p-corregir">Fichajes<span id="adm-badge-co" class="badge hidden"></span></button>
           <button data-p="p-vacaciones">Vacaciones<span id="adm-badge" class="badge hidden"></span></button>
           <button data-p="p-extra">Horas extra<span id="adm-badge-he" class="badge hidden"></span></button>
+          <button data-p="p-incidencias">Incidencias<span id="adm-badge-in" class="badge hidden"></span></button>
           <button data-p="p-informes">Informes</button>
           <button data-p="p-nominas">Nóminas</button>
           <button data-p="p-ajustes">Ajustes</button>
@@ -519,6 +545,18 @@
           </div>
         </div>
 
+        <!-- INCIDENCIAS (admin) -->
+        <div id="p-incidencias" class="panel hidden">
+          <div class="card">
+            <h2>Abiertas</h2>
+            <div id="ai-abiertas"></div>
+          </div>
+          <div class="card">
+            <h2>Resueltas recientemente</h2>
+            <ul class="lista" id="ai-cerradas"></ul>
+          </div>
+        </div>
+
         <!-- NÓMINAS -->
         <div id="p-nominas" class="panel hidden">
           <div id="n-estado"></div>
@@ -572,6 +610,25 @@
             </div>
             <label for="s-j-verano">Horas al día en verano (lunes a viernes)</label><input id="s-j-verano" type="time">
             <p class="m" style="margin-top:6px">El horario de verano se repite cada año en las mismas fechas.</p>
+          </div>
+          <div class="card">
+            <h2>Apartados para los empleados</h2>
+            <p class="ayuda">Desactiva lo que no quieras usar: desaparece de la app de los empleados (tú sigues viendo el historial). Recuerda pulsar «Guardar ajustes».</p>
+            <div class="interruptor"><div><h3>Vacaciones</h3><div class="m">Ver sus días y pedir vacaciones</div></div><input type="checkbox" id="s-mod-vac"></div>
+            <div class="interruptor" style="margin-top:10px"><div><h3>Horas extra</h3><div class="m">Pedir permiso para hacer horas extra</div></div><input type="checkbox" id="s-mod-he"></div>
+            <div class="interruptor" style="margin-top:10px"><div><h3>Corregir fichaje</h3><div class="m">Pedir que se añada un fichaje olvidado</div></div><input type="checkbox" id="s-mod-cor"></div>
+            <div class="interruptor" style="margin-top:10px"><div><h3>Incidencias</h3><div class="m">Comunicar problemas de informática, oficina, vehículos…</div></div><input type="checkbox" id="s-mod-inc"></div>
+            <p class="m" style="margin-top:10px">Las nóminas se activan más abajo, en «Vacaciones y nóminas».</p>
+          </div>
+          <div class="card">
+            <h2>Panel de administración</h2>
+            <label for="s-admin-min">Pedir el PIN otra vez tras…</label>
+            <select id="s-admin-min">
+              <option value="30">30 minutos sin usarlo</option>
+              <option value="120">2 horas sin usarlo</option>
+              <option value="360">6 horas sin usarlo (máximo)</option>
+            </select>
+            <p class="m" style="margin-top:6px">Mientras lo uses no caduca, aunque recargues la página. «Cerrar panel» lo bloquea al momento.</p>
           </div>
           <div class="card">
             <h2>Avisos por email</h2>
@@ -679,7 +736,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=16"></script>
-  <script src="app.js?v=16"></script>
+  <script src="geo.js?v=17"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

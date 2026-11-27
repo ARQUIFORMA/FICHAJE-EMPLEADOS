@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v9: almuerzo/comida, ZIP en el navegador, vacaciones del año anterior) */
+/* app.js — PWA de fichaje (v10: apartados activables, incidencias, panel que recuerda la sesión, más rápida) */
 (function () {
   'use strict';
 
@@ -100,6 +100,24 @@
       .finally(function () { barra(-1); });
   }
 
+  /** Pinta al instante la última respuesta guardada y, cuando llega la nueva, vuelve a pintar. */
+  function apiCache(payload, pintar) {
+    var p = {}; Object.keys(payload).forEach(function (k) { if (k !== 'token' && k !== 'adminToken') p[k] = payload[k]; });
+    var clave = 'fc|' + (payload.action.indexOf('admin') === 0 ? 'a|' : 'u|') + ((S.usuario && S.usuario.email) || '') + '|' + JSON.stringify(p);
+    var c = null;
+    try { c = JSON.parse(localStorage.getItem(clave) || 'null'); } catch (e) { /* */ }
+    if (c) { try { pintar(c, true); } catch (e) { /* */ } }
+    return api(payload).then(function (r) {
+      try { localStorage.setItem(clave, JSON.stringify(r)); } catch (e) { limpiarCache(); }
+      pintar(r, false); return r;
+    });
+  }
+  function limpiarCache(soloAdmin) {
+    try {
+      Object.keys(localStorage).forEach(function (k) { if (k.indexOf(soloAdmin ? 'fc|a|' : 'fc|') === 0) localStorage.removeItem(k); });
+    } catch (e) { /* */ }
+  }
+
   function descargar(nombre, blob) {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = nombre;
@@ -129,7 +147,10 @@
     if (vista === 'v-historial') cargarHistorial();
     if (vista === 'v-vacaciones') abrirSolTab(S.solTab || 'sol-vac');
     if (vista === 'v-ajustes') cargarMisNominas();
-    if (vista === 'v-admin') { if (S.adminToken) abrirPanel('p-hoy'); else setTimeout(function () { $('adm-pin').focus(); }, 50); }
+    if (vista === 'v-admin') {
+      if (S.adminToken) { if ($('adm-contenido').classList.contains('hidden')) abrirAdminUI(); else abrirPanel(S.panelActual || 'p-hoy'); }
+      else setTimeout(function () { $('adm-pin').focus(); }, 50);
+    }
   }
   document.querySelectorAll('nav button').forEach(function (b) { b.addEventListener('click', function () { mostrar(b.dataset.v); }); });
 
@@ -168,7 +189,8 @@
   function guardarToken(t) { try { localStorage.setItem('fichaje_token', t); } catch (e) { /* */ } }
   function leerToken() { try { return localStorage.getItem('fichaje_token'); } catch (e) { return null; } }
   function cerrarSesionLocal() {
-    try { localStorage.removeItem('fichaje_token'); localStorage.removeItem('fichaje_estado'); } catch (e) { /* */ }
+    try { localStorage.removeItem('fichaje_token'); localStorage.removeItem('fichaje_estado'); localStorage.removeItem('fichaje_adm'); } catch (e) { /* */ }
+    limpiarCache();
     S.provisional = false;
     S.token = null; S.adminToken = null; pararGps();
     var cf = $('coches-frame'); if (cf) cf.remove();
@@ -217,6 +239,7 @@
       $('nav-admin').classList.toggle('hidden', !r.usuario.esAdmin);
       $('nav-coches').classList.toggle('hidden', !r.cochesUnico);
       S.nominasActivas = !!r.nominasActivas;
+      aplicarModulos(r.modulos);
       $('yo-nominas').classList.toggle('hidden', !S.nominasActivas);
       $('aj-nombre').textContent = r.usuario.nombre; $('aj-email').textContent = r.usuario.email;
       $('aj-perfil').textContent = r.usuario.perfil; $('aj-sede').textContent = r.sede ? r.sede.nombre + ' (radio ' + r.sede.radio + ' m)' : '—';
@@ -360,8 +383,8 @@
   // ---------- Historial e informe propio ----------
   opcionesMeses($('h-mes'), 12); // el empleado solo puede descargar los últimos 12 meses
   function cargarHistorial() {
-    var ul = $('l-historial'); ul.innerHTML = '<li class="m">Cargando…</li>';
-    api({ action: 'historial', limite: 40 }).then(function (r) {
+    var ul = $('l-historial'); if (!ul.innerHTML) ul.innerHTML = '<li class="m">Cargando…</li>';
+    apiCache({ action: 'historial', limite: 40 }, function (r) {
       if (!r.fichajes.length) { ul.innerHTML = '<li class="m">Sin fichajes todavía.</li>'; return; }
       ul.innerHTML = r.fichajes.map(function (f) {
         var extra = f.maps ? ' · <a href="' + esc(f.maps) + '" target="_blank" rel="noopener">ver mapa</a>' : '';
@@ -382,15 +405,22 @@
   // =================================================================
   function bloquearAdmin() {
     S.adminToken = null;
+    try { localStorage.removeItem('fichaje_adm'); } catch (e) { /* */ }
+    limpiarCache(true);
     $('adm-contenido').classList.add('hidden'); $('adm-bloqueo').classList.remove('hidden');
   }
+  function abrirAdminUI() {
+    $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
+    S.empleadosT = 0;
+    abrirPanel(S.panelActual || 'p-hoy'); cargarEmpleados(); actualizarBadge(); cargarAjustes();
+  }
+  try { S.adminToken = localStorage.getItem('fichaje_adm') || null; } catch (e) { /* */ }
   $('f-admin').addEventListener('submit', function (ev) {
     ev.preventDefault(); cargando(true);
     api({ action: 'adminUnlock', pin: $('adm-pin').value.trim() }).then(function (r) {
       S.adminToken = r.adminToken; $('adm-pin').value = '';
-      $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
-      S.empleadosT = 0;
-      abrirPanel('p-hoy'); cargarEmpleados(); actualizarBadge(); cargarAjustes();
+      try { localStorage.setItem('fichaje_adm', r.adminToken); } catch (e) { /* */ }
+      abrirAdminUI();
     }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
   $('adm-cerrar').addEventListener('click', function () { bloquearAdmin(); toast('Panel cerrado.'); });
@@ -402,6 +432,7 @@
   });
 
   function abrirPanel(id) {
+    S.panelActual = id;
     $('adm-bloqueo').classList.add('hidden'); $('adm-contenido').classList.remove('hidden');
     document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.classList.toggle('activo', b.dataset.p === id); });
     document.querySelectorAll('.panel').forEach(function (p) { p.classList.toggle('hidden', p.id !== id); });
@@ -413,6 +444,7 @@
     if (id === 'p-ajustes' || (id === 'p-informes' && !S.ajustes)) cargarAjustes();
     if (id === 'p-extra') cargarHorasExtraAdmin();
     if (id === 'p-corregir') cargarCorreccionesAdmin();
+    if (id === 'p-incidencias') cargarIncidenciasAdmin();
     if (id === 'p-ajustes') cargarCoches();
   }
   document.querySelectorAll('#adm-seg button[data-p]').forEach(function (b) { b.addEventListener('click', function () { abrirPanel(b.dataset.p); }); });
@@ -422,7 +454,7 @@
   $('a-ver').addEventListener('click', cargarResumen);
   function cargarResumen() {
     if (!$('a-filas').innerHTML) $('a-filas').innerHTML = '<div class="m">Cargando…</div>';
-    api({ action: 'adminResumen', fecha: $('a-fecha').value, empresa: S.filtro }).then(function (r) {
+    apiCache({ action: 'adminResumen', fecha: $('a-fecha').value, empresa: S.filtro }, function (r) {
       var t = r.totales;
       $('a-festivo').innerHTML = r.festivo ? '<div class="aviso info">Día festivo: ' + esc(r.festivo) + '</div>' : '';
       $('a-kpis').innerHTML = [['Plantilla', t.plantilla], ['Ficharon', t.ficharon], ['Trabajando', t.trabajandoAhora], ['Incidencias', t.incidencias]]
@@ -857,6 +889,9 @@
       $('s-vac').value = r.config.VACACIONES_DIAS == null ? 22 : r.config.VACACIONES_DIAS;
       $('s-nominas').checked = !!r.config.NOMINAS_ACTIVAS;
       $('s-emails').value = r.config.EMAIL_AVISOS || '';
+      $('s-mod-vac').checked = r.config.VACACIONES_ACTIVAS !== false; $('s-mod-he').checked = r.config.HORAS_EXTRA_ACTIVAS !== false;
+      $('s-mod-cor').checked = r.config.CORRECCIONES_ACTIVAS !== false; $('s-mod-inc').checked = r.config.INCIDENCIAS_ACTIVAS !== false;
+      $('s-admin-min').value = String(r.config.ADMIN_MINUTOS || 360);
       $('s-email-info').innerHTML = 'Ahora llegan a: <b>' + esc((r.config.emailsAvisoEfectivos || []).join(', ')) + '</b>' +
         (r.config.ultimoErrorEmail ? '<div class="inc" style="margin-top:4px">Último error al enviar: ' + esc(r.config.ultimoErrorEmail) + '</div>' : '');
       $('s-h-entrada').value = r.config.HORA_AVISO_ENTRADA || '08:30';
@@ -925,12 +960,17 @@
           SESION_DIAS: num($('s-sesion').value), HORAS_MAX_JORNADA_ABIERTA: num($('s-hmax').value),
           GEOCERCA_ACTIVA: $('s-geocerca').checked, RECORDATORIOS: $('s-recordatorios').checked,
           VACACIONES_DIAS: num($('s-vac').value), NOMINAS_ACTIVAS: $('s-nominas').checked, EMAIL_AVISOS: $('s-emails').value.trim(),
+          VACACIONES_ACTIVAS: $('s-mod-vac').checked, HORAS_EXTRA_ACTIVAS: $('s-mod-he').checked, CORRECCIONES_ACTIVAS: $('s-mod-cor').checked,
+          INCIDENCIAS_ACTIVAS: $('s-mod-inc').checked, ADMIN_MINUTOS: num($('s-admin-min').value),
           HORA_AVISO_ENTRADA: $('s-h-entrada').value, HORA_AVISO_SALIDA: $('s-h-salida').value,
           HORA_AVISO_SALIDA_VIERNES: $('s-h-viernes').value,
           JORNADA_LJ: $('s-j-lj').value, JORNADA_V: $('s-j-v').value, JORNADA_VERANO: $('s-j-verano').value,
           VERANO_DESDE: $('s-v-desde').value.slice(5), VERANO_HASTA: $('s-v-hasta').value.slice(5) },
           sedes: sedes, appUrl: location.href.split('#')[0].split('?')[0] })
-      .then(function (r) { toast(r.mensaje); S.nominasActivas = $('s-nominas').checked; $('yo-nominas').classList.toggle('hidden', !S.nominasActivas); cargarAjustes(); })
+      .then(function (r) {
+        toast(r.mensaje); S.nominasActivas = $('s-nominas').checked;
+        var m = { vacaciones: $('s-mod-vac').checked, horasExtra: $('s-mod-he').checked, correcciones: $('s-mod-cor').checked, incidencias: $('s-mod-inc').checked };
+        aplicarModulos(m); aplicarModulosAdmin(m); $('yo-nominas').classList.toggle('hidden', !S.nominasActivas); cargarAjustes(); })
       .catch(function (e) { toast(e.message, 7000); }).finally(function () { cargando(false); });
   });
   $('s-integridad').addEventListener('click', function () {
@@ -1198,7 +1238,7 @@
   // =================================================================
   function txtPeriodo(a, b) { return a === b ? fechaCorta(a) : fechaCorta(a) + ' – ' + fechaCorta(b); }
   function cargarVacaciones() {
-    api({ action: 'misVacaciones' }).then(function (r) {
+    apiCache({ action: 'misVacaciones' }, function (r) {
       var s = r.saldo;
       $('vac-disp').textContent = s.disponibles;
       $('vac-disp').style.color = s.disponibles < 0 ? 'var(--bad)' : '';
@@ -1248,8 +1288,8 @@
   function abrirSolTab(t) {
     S.solTab = t;
     $('sol-tabs').querySelectorAll('button').forEach(function (x) { x.classList.toggle('activo', x.dataset.t === t); });
-    ['sol-vac', 'sol-he', 'sol-cor'].forEach(function (id) { $(id).classList.toggle('hidden', id !== t); });
-    if (t === 'sol-he') cargarHorasExtra(); else if (t === 'sol-cor') cargarCorrecciones(); else cargarVacaciones();
+    ['sol-vac', 'sol-he', 'sol-cor', 'sol-inc'].forEach(function (id) { $(id).classList.toggle('hidden', id !== t); });
+    if (t === 'sol-he') cargarHorasExtra(); else if (t === 'sol-cor') cargarCorrecciones(); else if (t === 'sol-inc') cargarIncidencias(); else cargarVacaciones();
   }
   function hmTxt(min) { min = Math.round(min || 0); return Math.floor(min / 60) + 'h' + (min % 60 ? ' ' + ('0' + (min % 60)).slice(-2) + 'm' : ''); }
   function medidor(usado, limite) {
@@ -1258,7 +1298,7 @@
   }
   $('he-fecha').value = hoyISO();
   function cargarHorasExtra() {
-    api({ action: 'misHorasExtra' }).then(function (r) {
+    apiCache({ action: 'misHorasExtra' }, function (r) {
       var x = r.resumen, mm = Number(r.mes.slice(5, 7));
       $('he-mes').textContent = MESES[mm - 1] + ' ' + r.mes.slice(0, 4);
       $('he-kpis').innerHTML = [['Hechas (según fichajes)', hmTxt(x.realizadas)], ['Autorizadas', hmTxt(x.autorizadas)], ['Pendientes', hmTxt(x.pendientes)]]
@@ -1314,7 +1354,7 @@
     l.push({ tipo: sig, hora: '' }); itemsCorreccion(l);
   });
   function cargarCorrecciones() {
-    api({ action: 'misCorrecciones' }).then(function (r) {
+    apiCache({ action: 'misCorrecciones' }, function (r) {
       $('co-lista').innerHTML = r.solicitudes.map(function (x) {
         return '<li><div><div class="t">' + esc(fechaCorta(x.fecha)) + '</div><div class="m">' + x.items.map(function (i) { return esc((ETQ[i.tipo] || i.tipo) + ' ' + i.hora); }).join(', ') +
           '</div>' + (x.respuesta ? '<div class="m"><b>Respuesta:</b> ' + esc(x.respuesta) + '</div>' : '') + '</div>' +
@@ -1345,7 +1385,7 @@
 
   // ----- Correcciones pedidas (admin) -----
   function cargarCorreccionesAdmin() {
-    return api({ action: 'adminCorreccionesPend', empresa: S.filtro }).then(function (r) {
+    return apiCache({ action: 'adminCorreccionesPend', empresa: S.filtro }, function (r) {
       var n = r.pendientes.length, bd = $('adm-badge-co');
       bd.textContent = n; bd.classList.toggle('hidden', !n);
       $('co-pend-card').classList.toggle('hidden', !n);
@@ -1390,7 +1430,7 @@
   // ----- Horas extra (admin) -----
   function cargarHorasExtraAdmin() {
     if (!$('he-pendientes').innerHTML) $('he-pendientes').innerHTML = '<p class="m">Cargando…</p>';
-    return api({ action: 'adminHorasExtra', empresa: S.filtro }).then(function (r) {
+    return apiCache({ action: 'adminHorasExtra', empresa: S.filtro }, function (r) {
       var bd = $('adm-badge-he'); bd.textContent = r.pendientes.length; bd.classList.toggle('hidden', !r.pendientes.length);
       $('he-a-anio').textContent = r.anio;
       $('he-pendientes').innerHTML = r.pendientes.map(function (h) {
@@ -1437,16 +1477,42 @@
   }
 
   // ----- Vacaciones (admin) -----
+  function pintarBadge(id, n) { var b = $(id); if (b) { b.textContent = n; b.classList.toggle('hidden', !n); } }
   function actualizarBadge(n) {
-    var pintar = function (k) { var b = $('adm-badge'); b.textContent = k; b.classList.toggle('hidden', !k); };
-    if (n !== undefined) return pintar(n);
-    api({ action: 'adminSolicitudes', empresa: S.filtro }).then(function (r) { pintar(r.pendientes.length); }).catch(function () {});
-    cargarCorreccionesAdmin();
-    api({ action: 'adminHorasExtra', empresa: S.filtro }).then(function (r) { var b = $('adm-badge-he'); b.textContent = r.pendientes.length; b.classList.toggle('hidden', !r.pendientes.length); }).catch(function () {});
+    if (n !== undefined) return pintarBadge('adm-badge', n);
+    apiCache({ action: 'adminBadges', empresa: S.filtro }, function (r) {
+      pintarBadge('adm-badge', r.vacaciones); pintarBadge('adm-badge-he', r.horasExtra);
+      pintarBadge('adm-badge-co', r.correcciones); pintarBadge('adm-badge-in', r.incidencias);
+      aplicarModulosAdmin(r.modulos);
+    }).catch(function () {});
+  }
+  /** Oculta en Admin los apartados desactivados. */
+  function aplicarModulosAdmin(m) {
+    if (!m) return;
+    var mapa = { 'p-vacaciones': m.vacaciones, 'p-extra': m.horasExtra, 'p-incidencias': m.incidencias };
+    Object.keys(mapa).forEach(function (p) {
+      var b = document.querySelector('#adm-seg button[data-p="' + p + '"]');
+      if (b) b.classList.toggle('hidden', !mapa[p]);
+    });
+  }
+  /** Muestra al empleado solo los apartados activos de «Solicitudes». */
+  function aplicarModulos(m) {
+    m = m || { vacaciones: true, horasExtra: true, correcciones: true, incidencias: true };
+    S.modulos = m;
+    var tabs = { 'sol-vac': m.vacaciones, 'sol-he': m.horasExtra, 'sol-cor': m.correcciones, 'sol-inc': m.incidencias }, n = 0;
+    Object.keys(tabs).forEach(function (t) {
+      var b = $('sol-tabs').querySelector('[data-t="' + t + '"]'); b.classList.toggle('hidden', !tabs[t]); if (tabs[t]) n++;
+    });
+    $('sol-tabs').style.setProperty('--n', Math.max(1, n));
+    $('sol-tabs').classList.toggle('hidden', n < 2);
+    var nav = document.querySelector('nav button[data-v="v-vacaciones"]');
+    if (nav) nav.classList.toggle('hidden', !n);
+    if (!tabs[S.solTab || 'sol-vac']) S.solTab = Object.keys(tabs).filter(function (t) { return tabs[t]; })[0];
+    var bp = $('b-pedir-corr'); if (bp) bp.classList.toggle('hidden', !m.correcciones);
   }
   function cargarSolicitudes() {
     if (!$('v-pendientes').innerHTML) $('v-pendientes').innerHTML = '<p class="m">Cargando…</p>';
-    return api({ action: 'adminSolicitudes', empresa: S.filtro }).then(function (r) {
+    return apiCache({ action: 'adminSolicitudes', empresa: S.filtro }, function (r) {
       actualizarBadge(r.pendientes.length);
       $('v-pendientes').innerHTML = r.pendientes.map(function (x) {
         var queda = x.disponibles == null ? '' : ' · le quedan ' + x.disponibles + (x.disponibles === 1 ? ' día' : ' días') + ' sin contar esta';
@@ -1648,6 +1714,118 @@
         });
       });
     }).catch(function (e) { ul.innerHTML = '<li class="m">' + esc(e.message) + '</li>'; });
+  }
+
+  // =================================================================
+  // INCIDENCIAS
+  // =================================================================
+  var CAT_INC = { INFORMATICA: 'Ordenador / informática', MOVIL: 'Móvil o app', OFICINA: 'Oficina e instalaciones', VEHICULO: 'Vehículos', MATERIAL: 'Material / herramientas', OTRO: 'Otro' };
+  function fechaHoraCorta(iso) { var d = new Date(iso); return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }); }
+  /** Reduce una foto del móvil a 1280 px en JPG para que suba rápido. */
+  function fotoReducida(file) {
+    return new Promise(function (ok, ko) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var k = Math.min(1, 1280 / Math.max(img.width, img.height));
+          var c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          ok(c.toDataURL('image/jpeg', 0.8).split(',')[1]);
+        };
+        img.onerror = function () { ko(new Error('No se pudo leer la foto.')); };
+        img.src = fr.result;
+      };
+      fr.onerror = function () { ko(new Error('No se pudo leer la foto.')); };
+      fr.readAsDataURL(file);
+    });
+  }
+  $('in-foto-btn').addEventListener('click', function () { $('in-foto').value = ''; $('in-foto').click(); });
+  $('in-foto').addEventListener('change', function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    if (!/^image\//.test(f.type)) return toast('Elige una imagen.');
+    fotoReducida(f).then(function (b64) { S.fotoInc = b64; $('in-foto-txt').textContent = '✔ Foto lista'; })
+      .catch(function (e) { toast(e.message); });
+  });
+  function verFoto(id, admin) {
+    cargando(true, 'Abriendo foto…');
+    var p = { action: 'fotoIncidencia', id: id }; if (admin) p.adminToken = S.adminToken;
+    api(p).then(function (r) {
+      abrirModal('<h2>Foto</h2><img src="data:' + esc(r.mime) + ';base64,' + r.base64 + '" style="width:100%;border-radius:12px" alt="Foto de la incidencia">' +
+        '<div class="acciones"><button class="btn sec" id="vf-ok">Cerrar</button></div>');
+      $('vf-ok').addEventListener('click', cerrarModal);
+    }).catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+  }
+  function cargarIncidencias() {
+    apiCache({ action: 'misIncidencias' }, function (r) {
+      $('in-lista').innerHTML = r.incidencias.map(function (x) {
+        return '<li><div><div class="t">' + (x.urgente ? '🔴 ' : '') + esc(x.asunto) + '</div><div class="m">' + esc(x.categoriaTxt) + ' · ' + esc(fechaHoraCorta(x.fecha)) + '</div>' +
+          (x.respuesta ? '<div class="m"><b>Respuesta:</b> ' + esc(x.respuesta) + '</div>' : '') +
+          (x.foto ? '<button class="btn sec peq" style="margin-top:6px" data-ifo="' + esc(x.id) + '">Ver foto</button>' : '') + '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><span class="chip est-' + ({ ABIERTA: 'PENDIENTE', EN_CURSO: 'PENDIENTE', RESUELTA: 'APROBADA' }[x.estado] || 'CANCELADA') + '">' + esc(x.estadoTxt) + '</span>' +
+          (x.estado === 'ABIERTA' ? '<button class="btn sec peq" data-ica="' + esc(x.id) + '">Cancelar</button>' : '') + '</div></li>';
+      }).join('') || '<li class="m">No has comunicado ninguna incidencia.</li>';
+      $('in-lista').querySelectorAll('[data-ifo]').forEach(function (b) { b.addEventListener('click', function () { verFoto(b.dataset.ifo, false); }); });
+      $('in-lista').querySelectorAll('[data-ica]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          if (!confirm('¿Cancelar esta incidencia?')) return;
+          cargando(true);
+          api({ action: 'cancelarIncidencia', id: b.dataset.ica }).then(function (k) { toast(k.mensaje); cargarIncidencias(); })
+            .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
+        });
+      });
+    }).catch(function (e) { toast(e.message); });
+  }
+  $('in-enviar').addEventListener('click', function () {
+    var d = { action: 'crearIncidencia', categoria: $('in-cat').value, asunto: $('in-asunto').value.trim(), descripcion: $('in-desc').value.trim(),
+              urgente: $('in-urg').checked, foto: S.fotoInc || '' };
+    if (d.asunto.length < 3) return toast('Pon un título corto.');
+    if (d.descripcion.length < 5) return toast('Cuenta qué pasa.');
+    cargando(true, 'Enviando…');
+    api(d).then(function (r) {
+      toast(r.mensaje, 6000); $('in-asunto').value = ''; $('in-desc').value = ''; $('in-urg').checked = false; S.fotoInc = ''; $('in-foto-txt').textContent = '';
+      cargarIncidencias();
+    }).catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+  });
+
+  // ----- Incidencias (admin) -----
+  function cargarIncidenciasAdmin() {
+    if (!$('ai-abiertas').innerHTML) $('ai-abiertas').innerHTML = '<p class="m">Cargando…</p>';
+    return apiCache({ action: 'adminIncidencias', empresa: S.filtro }, function (r) {
+      pintarBadge('adm-badge-in', r.abiertas.filter(function (x) { return x.estado === 'ABIERTA'; }).length);
+      $('ai-abiertas').innerHTML = r.abiertas.map(function (x) {
+        return '<div class="fila-admin"><div class="cab"><b>' + (x.urgente ? '🔴 ' : '') + esc(x.asunto) + '</b><span class="chip est-PENDIENTE">' + esc(x.estadoTxt) + '</span></div>' +
+          '<div class="det"><b>' + esc(x.nombre) + '</b> · ' + esc(x.categoriaTxt) + ' · ' + esc(fechaHoraCorta(x.fecha)) + '<br>' + esc(x.descripcion).replace(/\n/g, '<br>') +
+          (x.respuesta ? '<br><i>Tu última respuesta: ' + esc(x.respuesta) + '</i>' : '') + '</div>' +
+          '<div class="acciones" style="margin-top:10px">' + (x.foto ? '<button class="btn sec peq" data-afo="' + esc(x.id) + '">Ver foto</button>' : '') +
+          (x.estado === 'ABIERTA' ? '<button class="btn sec peq" data-acu="' + esc(x.id) + '">En curso</button>' : '') +
+          '<button class="btn peq" data-are="' + esc(x.id) + '">Resolver</button></div></div>';
+      }).join('') || '<p class="m">No hay incidencias abiertas. 🎉</p>';
+      var buscar = function (id) { return r.abiertas.filter(function (x) { return x.id === id; })[0]; };
+      $('ai-abiertas').querySelectorAll('[data-afo]').forEach(function (b) { b.addEventListener('click', function () { verFoto(b.dataset.afo, true); }); });
+      $('ai-abiertas').querySelectorAll('[data-acu]').forEach(function (b) { b.addEventListener('click', function () { responderIncidencia(buscar(b.dataset.acu), 'EN_CURSO'); }); });
+      $('ai-abiertas').querySelectorAll('[data-are]').forEach(function (b) { b.addEventListener('click', function () { responderIncidencia(buscar(b.dataset.are), 'RESUELTA'); }); });
+      $('ai-cerradas').innerHTML = r.cerradas.map(function (x) {
+        return '<li><div><div class="t">' + esc(x.asunto) + '</div><div class="m">' + esc(x.nombre) + ' · ' + esc(fechaHoraCorta(x.fecha)) + (x.respuesta ? ' · ' + esc(x.respuesta) : '') + '</div></div>' +
+          '<span class="chip est-' + (x.estado === 'RESUELTA' ? 'APROBADA' : 'CANCELADA') + '">' + esc(x.estadoTxt) + '</span></li>';
+      }).join('') || '<li class="m">Ninguna todavía.</li>';
+    }).catch(function (e) { toast(e.message); });
+  }
+  function responderIncidencia(x, estado) {
+    var res = estado === 'RESUELTA';
+    abrirModal('<h2>' + (res ? 'Resolver incidencia' : 'Marcar en curso') + '</h2><p class="ayuda"><b>' + esc(x.asunto) + '</b> · ' + esc(x.nombre) + '</p>' +
+      '<label for="ri-txt">' + (res ? 'Qué se ha hecho (obligatorio)' : 'Mensaje para ' + esc(x.nombre) + ' (opcional)') + '</label>' +
+      '<textarea id="ri-txt" placeholder="' + (res ? 'Ej.: cambiado el tóner; ya imprime.' : 'Ej.: el técnico viene el jueves.') + '"></textarea>' +
+      '<p class="m">Se le enviará un email.</p><div class="acciones"><button class="btn sec" id="ri-no">Volver</button><button class="btn" id="ri-ok">' + (res ? 'Resolver' : 'Marcar en curso') + '</button></div>');
+    $('ri-no').addEventListener('click', cerrarModal);
+    $('ri-ok').addEventListener('click', function () {
+      var t = $('ri-txt').value.trim();
+      if (res && t.length < 3) return toast('Escribe qué se ha hecho.');
+      cargando(true);
+      api({ action: 'adminActualizarIncidencia', id: x.id, estado: estado, respuesta: t }).then(function (k) { cerrarModal(); toast(k.mensaje, 5000); return cargarIncidenciasAdmin(); })
+        .catch(function (e) { toast(e.message, 6000); }).finally(function () { cargando(false); });
+    });
   }
 
   // ---------- Aviso «Instala la app en tu móvil» ----------
