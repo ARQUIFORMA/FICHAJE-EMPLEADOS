@@ -251,7 +251,7 @@
         <p class="ayuda">Descarga en Excel tus horas de cualquier mes.</p>
         <div class="fila2" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)">
           <div><select id="h-mes" aria-label="Mes"></select></div>
-          <div><button class="btn" id="h-descargar">Descargar Excel</button></div>
+          <div><button class="btn" id="h-descargar">Descargar PDF</button></div>
         </div>
       </div>
       <div class="card">
@@ -467,7 +467,7 @@
         <!-- INFORMES -->
         <div id="p-informes" class="panel hidden">
           <div class="card">
-            <h2>Excel mensual por empleado</h2>
+            <h2>Registro mensual por empleado</h2>
             <p class="ayuda">Elige el registro sencillo para la Inspección o el completo para uso interno.</p>
             <label for="i-mes">Mes</label>
             <select id="i-mes"></select>
@@ -478,8 +478,10 @@
               <option value="inspeccion">Para la Inspección (entrada, almuerzo, comida, salida y firmas)</option>
               <option value="completo">Completo (con motivos, ubicación y detalle de cada fichaje)</option>
             </select>
+            <label for="i-archivo">Archivo</label>
+            <select id="i-archivo"><option value="pdf">PDF (listo para imprimir o enviar)</option><option value="xlsx">Excel (para retocar antes de enviarlo)</option></select>
             <div style="height:14px"></div>
-            <button class="btn" id="i-descargar">Descargar Excel</button>
+            <button class="btn" id="i-descargar">Descargar</button>
           </div>
           <div class="card">
             <h2>Todos los empleados de golpe</h2>
@@ -488,7 +490,9 @@
               <div><label for="z-mes">Mes</label><select id="z-mes"></select></div>
               <div><label for="z-anio">Año</label><select id="z-anio"></select></div>
             </div>
-            <label for="z-formato">Qué Excel</label>
+            <label for="z-archivo">Archivo</label>
+            <select id="z-archivo"><option value="pdf">PDF</option><option value="xlsx">Excel</option></select>
+            <label for="z-formato">Qué registro</label>
             <select id="z-formato">
               <option value="inspeccion">Solo los de la Inspección</option>
               <option value="completo">Solo los completos (con resumen)</option>
@@ -794,7 +798,7 @@
   <div id="cargando" class="cargando hidden"><div class="spinner"></div><p id="cargando-txt"></p></div>
 
   <script src="config.js"></script>
-  <script src="geo.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="geo.js?v=16"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

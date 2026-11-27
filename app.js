@@ -1,4 +1,4 @@
-/* app.js — PWA de fichaje (v15: almuerzo opcional) */
+/* app.js — PWA de fichaje (v16: registros en PDF y Excel con mejor formato) */
 /* La versión debe coincidir con VERSION_APP de Code.gs y con version.json */
 (function () {
   'use strict';
@@ -116,7 +116,7 @@
     var nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador';
     return so + ' · ' + nav;
   }
-  var APP_V = 15;
+  var APP_V = 16;
   /** Botón de pausa: almuerzo antes de las 13:00 (si está activado en Ajustes) o comida desde las 13:00. */
   function pintarPausa() {
     var bp = $('b-pausa'); if (!bp) return;
@@ -180,7 +180,7 @@
     for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     descargar(r.nombreArchivo, new Blob([bytes], { type: tipo }));
   }
-  function descargarXlsx(r) { descargarBase64(r, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); }
+  function descargarXlsx(r) { descargarBase64(r, r.mime || (/\.pdf$/i.test(r.nombreArchivo) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')); }
 
   function abrirModal(html) { $('modal-hoja').innerHTML = html; $('modal').classList.remove('hidden'); }
   function cerrarModal() { S.modalFijo = false; $('modal').classList.add('hidden'); $('modal-hoja').innerHTML = ''; }
@@ -463,7 +463,7 @@
     }).catch(function (e) { ul.innerHTML = '<li class="m">' + esc(e.message) + '</li>'; });
   }
   $('h-descargar').addEventListener('click', function () {
-    cargando(true, 'Generando Excel…');
+    cargando(true, 'Generando PDF…');
     api({ action: 'miInforme', mes: $('h-mes').value }).then(descargarXlsx)
       .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
@@ -874,8 +874,8 @@
   $('e-desde').value = hoyISO().slice(0, 8) + '01'; $('e-hasta').value = hoyISO();
   $('i-descargar').addEventListener('click', function () {
     if (!$('i-empleado').value) return toast('Elige un empleado.');
-    cargando(true, 'Generando Excel…');
-    api({ action: 'adminInforme', email: $('i-empleado').value, mes: $('i-mes').value, formato: $('i-formato').value }).then(descargarXlsx)
+    cargando(true, 'Generando ' + ($('i-archivo').value === 'pdf' ? 'PDF' : 'Excel') + '…');
+    api({ action: 'adminInforme', email: $('i-empleado').value, mes: $('i-mes').value, formato: $('i-formato').value, archivo: $('i-archivo').value }).then(descargarXlsx)
       .catch(function (e) { toast(e.message); }).finally(function () { cargando(false); });
   });
   // Selector de mes y año para la descarga de todos
@@ -911,7 +911,7 @@
   function b64aBytes(b64) { var bin = atob(b64), r = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) r[i] = bin.charCodeAt(i); return r; }
 
   $('z-descargar').addEventListener('click', function () {
-    var mes = $('z-anio').value + '-' + $('z-mes').value, formato = $('z-formato').value;
+    var mes = $('z-anio').value + '-' + $('z-mes').value, formato = $('z-formato').value, archivoZip = $('z-archivo').value;
     if (mes > hoyISO().slice(0, 7)) return toast('Ese mes todavía no ha llegado.');
     cargarEmpleados().then(function () {
       var gente = S.empleados.filter(function (u) { return u.activo && deFiltro(u); })
@@ -927,13 +927,13 @@
       var archivos = [], fallos = [], resumen = {}, hechas = 0, i = 0, parar = false;
       $('z-descargar').disabled = true;
       cargando(true);
-      var txt = function () { $('cargando-txt').textContent = 'Generando Excel ' + hechas + ' de ' + tareas.length + '… (no cierres la app)'; };
+      var txt = function () { $('cargando-txt').textContent = 'Generando archivo ' + hechas + ' de ' + tareas.length + '… (no cierres la app)'; };
       txt();
       function siguiente() {
         if (parar || i >= tareas.length) return Promise.resolve();
         var t = tareas[i++];
         var carpeta = (multi ? limpio(nombreEmpresa(t.u.idEmpresa)) + '/' : '') + (formato === 'ambos' ? (t.f === 'completo' ? 'Completo/' : 'Inspección/') : '');
-        return api({ action: 'adminInforme', email: t.u.email, mes: mes, formato: t.f }).then(function (r) {
+        return api({ action: 'adminInforme', email: t.u.email, mes: mes, formato: t.f, archivo: archivoZip }).then(function (r) {
           archivos.push({ nombre: carpeta + r.nombreArchivo, datos: b64aBytes(r.base64) });
           if (r.totales) (resumen[t.u.idEmpresa || ''] = resumen[t.u.idEmpresa || ''] || []).push({ nombre: t.u.nombre, nif: t.u.nif, email: t.u.email, puesto: t.u.puesto,
             dias: r.totales.dias, minutos: r.totales.minutos, extra: r.totales.extra, incidencias: r.totales.incidencias });
@@ -948,7 +948,7 @@
         $('cargando-txt').textContent = 'Generando el resumen…';
         return Promise.all(Object.keys(resumen).map(function (idEmp) {
           var carpeta = (multi ? limpio(nombreEmpresa(idEmp)) + '/' : '') + (formato === 'ambos' ? 'Completo/' : '');
-          return api({ action: 'adminResumenMes', mes: mes, empresa: idEmp, filas: resumen[idEmp] })
+          return api({ action: 'adminResumenMes', mes: mes, empresa: idEmp, filas: resumen[idEmp], archivo: archivoZip })
             .then(function (r) { archivos.push({ nombre: carpeta + r.nombreArchivo, datos: b64aBytes(r.base64) }); })
             .catch(function (e) { fallos.push('Resumen: ' + e.message); });
         }));
